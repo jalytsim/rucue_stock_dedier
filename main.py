@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
 Générateur de Reçus Pro
-Application desktop pour générer des reçus thermiques (58mm, 80mm)
-Avec autocomplétion intelligente et base de données locale
+Application desktop pour générer des reçus thermiques
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Ajouter le répertoire parent au path
@@ -25,7 +23,7 @@ def main():
     db = Database("data/receipts.db")
     print("✅ Base de données initialisée")
     
-    # Initialiser le générateur PDF avec les paramètres
+    # Initialiser le générateur PDF
     settings = db.get_all_settings()
     pdf_generator = ReceiptGenerator(settings)
     print("✅ Générateur PDF initialisé")
@@ -34,7 +32,7 @@ def main():
     controller = ReceiptController(db, pdf_generator)
     print("✅ Contrôleur initialisé")
     
-    # Créer et lancer l'interface graphique
+    # Créer et lancer l'interface
     print("✅ Lancement de l'interface graphique...")
     app = MainWindow(controller)
     app.run()
