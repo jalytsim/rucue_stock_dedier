@@ -16,14 +16,17 @@ class MainWindow:
     def __init__(self, controller):
         self.controller = controller
         
-        # Créer la fenêtre principale
+        # Créer la fenêtre principale en plein écran
         self.root = ttk.Window(
             title="💼 Générateur de Reçus Pro",
-            themename="cosmo",
-            size=(1400, 900)
+            themename="cosmo"
         )
         
-        self.root.place_window_center()
+        # Activer le plein écran
+        self.root.attributes('-fullscreen', True)
+        
+        # Quitter le plein écran / fermer l'application avec Échap
+        self.root.bind("<Escape>", lambda e: self.root.destroy())
         
         # Créer l'interface
         self.create_widgets()
@@ -61,3 +64,13 @@ class MainWindow:
     def run(self):
         """Lancer l'application"""
         self.root.mainloop()
+
+
+# Exemple d'utilisation
+if __name__ == "__main__":
+    # Ici, controller peut être un objet vide ou ton vrai controller
+    class DummyController:
+        pass
+
+    app = MainWindow(DummyController())
+    app.run()
