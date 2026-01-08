@@ -11,10 +11,10 @@ class ThermalPrinter:
     def __init__(self, settings):
         self.settings = settings
         self.printer = None
-        self.paper_width = int(settings.get('paper_width', '58'))
 
-        # Largeur en caractères selon le papier
-        self.line_width = 32 if self.paper_width == 58 else 48
+        # Force votre XP-Q300 en 80 mm = 48 caractères
+        self.paper_width = int(settings.get('paper_width', '80'))
+        self.line_width = 48
 
     def connect(self):
         try:
@@ -28,32 +28,27 @@ class ThermalPrinter:
 
     def side_by_side(self, left, right):
         """
-        Affiche réellement deux textes sur la même ligne.
-        Gestion automatique de troncature et des espaces.
+        Affiche réellement deux textes sur la même ligne (80mm = 48 chars).
+        Gestion correcte des espaces et troncature minimale.
         """
         left = left.strip()
         right = right.strip()
 
-        # Tronquer si trop long
-        max_left = self.line_width // 2
-        max_right = self.line_width - max_left
+        total_len = len(left) + len(right)
 
-        if len(left) > max_left:
-            left = left[:max_left - 3] + "..."
+        if total_len >= self.line_width:
+            # tronquer uniquement ce qui dépasse
+            excess = total_len - self.line_width + 1
+            if len(right) > len(left):
+                right = right[:-excess]
+            else:
+                left = left[:-excess]
 
-        if len(right) > max_right:
-            right = right[:max_right - 3] + "..."
-
-        # Calcul des espaces restants
         spaces = self.line_width - len(left) - len(right)
-        if spaces < 1:
-            spaces = 1
-
         return left + (" " * spaces) + right + "\n"
 
     def print_receipt(self, receipt_data):
         try:
-            # Connexion auto si nécessaire
             if not self.printer:
                 ok, msg = self.connect()
                 if not ok:
@@ -64,26 +59,27 @@ class ThermalPrinter:
             # ============================
             #    CLIENT & SOCIETE
             # ============================
-            company_name = self.settings.get('company_name', '')
-            self.printer.text(self.side_by_side("CLIENT", company_name))
+            self.printer.text(self.side_by_side("CLIENT", self.settings.get('company_name', '')))
             self.printer.set(bold=False)
 
-            # CLIENT & TELEPHONE SOCIETE
-            client_name = receipt_data.get('client_name', '(Non spécifié)')
-            company_phone = self.settings.get('company_phone', '')
-            self.printer.text(self.side_by_side(client_name, company_phone))
+            # CLIENT NOM / TELEPHONE SOCIETE
+            self.printer.text(self.side_by_side(
+                receipt_data.get('client_name', '(Non spécifié)'),
+                self.settings.get('company_phone', '')
+            ))
 
-            # TEL CLIENT & NIF
-            client_phone = receipt_data.get('client_phone', '')
-            company_nif = self.settings.get('company_nif', '')
-            self.printer.text(self.side_by_side(client_phone, f"NIF: {company_nif}" if company_nif else ""))
+            # TEL CLIENT / NIF SOCIETE
+            self.printer.text(self.side_by_side(
+                receipt_data.get('client_phone', ''),
+                f"NIF: {self.settings.get('company_nif', '')}" if self.settings.get('company_nif') else ""
+            ))
 
-            # STAT seulement à droite
-            company_stat = self.settings.get('company_stat', '')
-            if company_stat:
-                self.printer.text(self.side_by_side("", f"STAT: {company_stat}"))
+            # STAT
+            stat = self.settings.get('company_stat', '')
+            if stat:
+                self.printer.text(self.side_by_side("", f"STAT: {stat}"))
 
-            # Adresse à droite (gestion multilignes)
+            # Adresse sur plusieurs lignes
             address = self.settings.get('company_address', '')
             for line in address.split("\n"):
                 self.printer.text(self.side_by_side("", line))
@@ -93,21 +89,18 @@ class ThermalPrinter:
             self.printer.text("\n")
 
             # ============================
-            #   NO FACTURE & DATE COTE À COTE
+            #    NO FACTURE & DATE
             # ============================
             self.printer.set(bold=True)
 
             no_text = f"No: {receipt_data['receipt_number']}"
             try:
                 d = datetime.strptime(receipt_data['date'], "%Y-%m-%d")
-                formatted_date = d.strftime("%d/%m/%Y")
+                date_text = f"Date: {d.strftime('%d/%m/%Y')}"
             except:
-                formatted_date = receipt_data['date']
-
-            date_text = f"Date: {formatted_date}"
+                date_text = f"Date: {receipt_data['date']}"
 
             self.printer.text(self.side_by_side(no_text, date_text))
-
             self.printer.set(bold=False)
             self.printer.text("\n")
 
@@ -115,21 +108,19 @@ class ThermalPrinter:
             self.printer.text("\n")
 
             # ============================
-            #       LISTE DES ARTICLES
+            #     LISTE DES ARTICLES
             # ============================
             self.printer.set(align='center', bold=True)
             self.printer.text("Liste des articles\n\n")
             self.printer.set(align='left', bold=False)
 
             currency = self.settings.get('currency', 'Ar')
-            max_chars = 30 if self.paper_width == 58 else 45
 
             for i, item in enumerate(receipt_data['items'], 1):
                 name = item["name"]
-                if len(name) > max_chars:
-                    name = name[:max_chars - 3] + "..."
+                if len(name) > 44:
+                    name = name[:41] + "..."
 
-                # Nom du produit
                 self.printer.set(bold=True)
                 self.printer.text(f"{i}. {name}\n")
                 self.printer.set(bold=False)
@@ -141,7 +132,7 @@ class ThermalPrinter:
                 self.printer.text(f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}\n\n")
 
             # ============================
-            #           TOTAL
+            #            TOTAL
             # ============================
             self._print_separator()
             self.printer.text("\n")
