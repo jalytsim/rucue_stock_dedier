@@ -1,4 +1,7 @@
-import subprocess
+"""
+Interface graphique principale - Point d'entrée
+Délègue chaque onglet à un module spécialisé
+"""
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
@@ -12,8 +15,7 @@ from views.tabs.settings_tab import SettingsTab
 class MainWindow:
     def __init__(self, controller):
         self.controller = controller
-        self.keyboard_process = None  # Pour gérer Onboard
-
+        
         # Créer la fenêtre principale en plein écran
         self.root = ttk.Window(
             title="💼 Générateur de Reçus Pro",
@@ -25,39 +27,13 @@ class MainWindow:
         
         # Quitter le plein écran / fermer l'application avec Échap
         self.root.bind("<Escape>", lambda e: self.root.destroy())
-
-        # Créer le bouton clavier virtuel
-        self.create_keyboard_button()
         
-        # Créer l'interface principale
+        # Créer l'interface
         self.create_widgets()
         
         # Initialisation initiale
         self.new_receipt_tab.refresh_current_items()
         self.new_receipt_tab.update_receipt_number()
-    
-    def create_keyboard_button(self):
-        """Créer un bouton pour afficher / cacher le clavier virtuel"""
-        self.keyboard_btn = ttk.Button(
-            self.root, text="Afficher / Cacher le clavier virtuel",
-            command=self.toggle_keyboard,
-            bootstyle="success-outline"
-        )
-        # On place le bouton en haut
-        self.keyboard_btn.pack(side=TOP, pady=5)
-
-    def toggle_keyboard(self):
-        """Afficher ou cacher le clavier virtuel Onboard"""
-        if self.keyboard_process is None:
-            # Lancer Onboard
-            try:
-                self.keyboard_process = subprocess.Popen(["onboard"])
-            except FileNotFoundError:
-                print("Onboard n'est pas installé. Faites : sudo apt install onboard")
-        else:
-            # Fermer Onboard
-            self.keyboard_process.terminate()
-            self.keyboard_process = None
     
     def create_widgets(self):
         """Créer les widgets de l'interface"""
