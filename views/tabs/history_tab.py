@@ -131,25 +131,51 @@ class HistoryTab:
             ttk.Button(btn_frame, text="📄 Régénérer PDF", 
                       command=self.regenerate_receipt, bootstyle="success").pack(
                           fill=X, ipady=12, pady=2)
+            ttk.Button(btn_frame, text="🖨️ Réimprimer (Thermique)", 
+                      command=self.reprint_thermal_receipt, bootstyle="info").pack(
+                          fill=X, ipady=12, pady=2)
+            ttk.Button(btn_frame, text="🖨️ Réimprimer (Laser A6)", 
+                      command=self.reprint_laser_receipt, bootstyle="warning").pack(
+                          fill=X, ipady=12, pady=2)
             ttk.Button(btn_frame, text="🗑️ Supprimer", 
                       command=self.delete_receipt, bootstyle="danger").pack(
                           fill=X, ipady=12, pady=2)
             ttk.Button(btn_frame, text="📁 Ouvrir dossier", 
-                      command=self.open_exports_folder, bootstyle="info").pack(
+                      command=self.open_exports_folder, bootstyle="secondary").pack(
                           fill=X, ipady=12, pady=2)
         else:
-            # Boutons côte à côte
-            ttk.Button(btn_frame, text="👁️ Voir détails", 
+            # Boutons côte à côte (3 lignes)
+            # Ligne 1
+            row1 = ttk.Frame(btn_frame)
+            row1.pack(fill=X, pady=2)
+            
+            ttk.Button(row1, text="👁️ Voir détails", 
                       command=self.view_receipt_details, bootstyle="primary", 
                       width=18).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
-            ttk.Button(btn_frame, text="📄 Régénérer PDF", 
+            ttk.Button(row1, text="📄 Régénérer PDF", 
                       command=self.regenerate_receipt, bootstyle="success", 
                       width=18).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
-            ttk.Button(btn_frame, text="🗑️ Supprimer", 
+            
+            # Ligne 2
+            row2 = ttk.Frame(btn_frame)
+            row2.pack(fill=X, pady=2)
+            
+            ttk.Button(row2, text="🖨️ Thermique", 
+                      command=self.reprint_thermal_receipt, bootstyle="info", 
+                      width=18).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
+            ttk.Button(row2, text="🖨️ Laser (A6)", 
+                      command=self.reprint_laser_receipt, bootstyle="warning", 
+                      width=18).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
+            
+            # Ligne 3
+            row3 = ttk.Frame(btn_frame)
+            row3.pack(fill=X, pady=2)
+            
+            ttk.Button(row3, text="🗑️ Supprimer", 
                       command=self.delete_receipt, bootstyle="danger", 
                       width=15).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
-            ttk.Button(btn_frame, text="📁 Dossier", 
-                      command=self.open_exports_folder, bootstyle="info", 
+            ttk.Button(row3, text="📁 Dossier", 
+                      command=self.open_exports_folder, bootstyle="secondary", 
                       width=15).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
     
     def refresh_history(self):
@@ -275,6 +301,48 @@ class HistoryTab:
                 self.open_file(result)
         else:
             messagebox.showerror("Erreur", result, parent=self.frame)
+    
+    def reprint_thermal_receipt(self):
+        """Réimprimer un reçu sur l'imprimante thermique"""
+        selection = self.history_tree.selection()
+        if not selection:
+            messagebox.showwarning("Attention", 
+                                 "Veuillez sélectionner un reçu à réimprimer", 
+                                 parent=self.frame)
+            return
+        
+        receipt_id = self.history_tree.item(selection[0])['tags'][0]
+        
+        if messagebox.askyesno("Confirmation", 
+                               "Réimprimer ce reçu sur l'imprimante thermique ?", 
+                               parent=self.frame):
+            success, message = self.controller.reprint_thermal_receipt(receipt_id)
+            
+            if success:
+                messagebox.showinfo("Succès", message, parent=self.frame)
+            else:
+                messagebox.showerror("Erreur", message, parent=self.frame)
+    
+    def reprint_laser_receipt(self):
+        """Réimprimer un reçu sur l'imprimante laser (NOUVEAU)"""
+        selection = self.history_tree.selection()
+        if not selection:
+            messagebox.showwarning("Attention", 
+                                 "Veuillez sélectionner un reçu à réimprimer", 
+                                 parent=self.frame)
+            return
+        
+        receipt_id = self.history_tree.item(selection[0])['tags'][0]
+        
+        if messagebox.askyesno("Confirmation", 
+                               "Réimprimer ce reçu sur l'imprimante laser (format A6) ?", 
+                               parent=self.frame):
+            success, message = self.controller.reprint_laser_receipt(receipt_id)
+            
+            if success:
+                messagebox.showinfo("Succès", message, parent=self.frame)
+            else:
+                messagebox.showerror("Erreur", message, parent=self.frame)
     
     def delete_receipt(self):
         """Supprimer un reçu"""

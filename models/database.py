@@ -60,7 +60,7 @@ class Database:
         
         # Initialiser les paramètres par défaut
         default_settings = {
-            'company_name': 'COMPTOIR FIDAHOUSSEN',
+            'company_name': 'Magasin Ly',
             'company_address': '85 RUE DE LIEGE TSARALALANA\nANTANANARIVO 101',
             'company_phone': '020 76 231 43',
             'company_email': 'cf@moov.mg',
@@ -72,7 +72,12 @@ class Database:
             'receipt_counter': '1',
             'currency': 'Ar',
             'paper_width': '58',  # mm
-            'receipt_type': 'Grossiste - Détaillants/ Vente à l\'utilisateur'
+            'receipt_type': 'Grossiste - Détaillants/ Vente à l\'utilisateur',
+            
+            # NOUVEAUX PARAMÈTRES POUR L'IMPRIMANTE LASER
+            'laser_printer_name': 'HP_LaserJet_1022n',  # Nom de l'imprimante laser
+            'laser_paper_format': 'A6',  # Format papier (A6, A5, A4, etc.)
+            'laser_enabled': 'true',  # Activer l'impression laser
         }
         
         for key, value in default_settings.items():

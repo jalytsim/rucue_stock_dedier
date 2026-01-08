@@ -229,6 +229,87 @@ class ReceiptController:
             import traceback
             error_detail = traceback.format_exc()
             return False, f"Erreur de réimpression:\n{str(e)}\n\nDétails:\n{error_detail}"
+        
+    def print_laser_receipt(self, client_name='', client_phone='', payment_method='Espèces', notes=''):
+        """Imprimer directement sur l'imprimante laser et sauvegarder dans l'historique"""
+        if not self.current_items:
+            return False, "Aucun article à imprimer"
+        
+        # Préparer les données du reçu
+        receipt_data = {
+            'receipt_number': self.db.get_next_receipt_number(),
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'client_name': client_name,
+            'client_phone': client_phone,
+            'items': self.current_items.copy(),
+            'total': self.get_current_total(),
+            'payment_method': payment_method,
+            'notes': notes
+        }
+        
+        # Sauvegarder dans la base de données AVANT l'impression
+        try:
+            self.db.save_receipt(receipt_data)
+        except Exception as e:
+            return False, f"Erreur de sauvegarde: {str(e)}"
+        
+        # Imprimer sur l'imprimante laser
+        try:
+            from models.laser_printer import LaserPrinter
+            settings = self.db.get_all_settings()
+            printer = LaserPrinter(settings)
+            
+            success, message = printer.print_receipt(receipt_data)
+            
+            if success:
+                # Vider les articles actuels seulement si impression réussie
+                self.clear_current_items()
+                return True, f"Reçu {receipt_data['receipt_number']} imprimé (laser) et sauvegardé"
+            else:
+                # L'impression a échoué mais le reçu est sauvegardé dans l'historique
+                self.clear_current_items()
+                return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{message}"
+        
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            # Le reçu est déjà sauvegardé dans l'historique
+            self.clear_current_items()
+            return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{str(e)}\n\nDétails:\n{error_detail}"
+
+    def test_laser_printer(self):
+        """Tester la connexion à l'imprimante laser"""
+        try:
+            from models.laser_printer import LaserPrinter
+            settings = self.db.get_all_settings()
+            printer = LaserPrinter(settings)
+            return printer.check_connection()
+        except Exception as e:
+            return False, f"Erreur: {str(e)}"
+
+    def reprint_laser_receipt(self, receipt_id):
+        """Réimprimer un reçu existant sur l'imprimante laser"""
+        receipt_data = self.db.get_receipt_by_id(receipt_id)
+        
+        if not receipt_data:
+            return False, "Reçu introuvable"
+        
+        try:
+            from models.laser_printer import LaserPrinter
+            settings = self.db.get_all_settings()
+            printer = LaserPrinter(settings)
+            
+            success, message = printer.print_receipt(receipt_data)
+            
+            if success:
+                return True, f"Reçu {receipt_data['receipt_number']} réimprimé (laser) avec succès"
+            else:
+                return False, message
+        
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            return False, f"Erreur de réimpression laser:\n{str(e)}\n\nDétails:\n{error_detail}"
     
     def get_statistics(self):
         """Obtenir les statistiques"""

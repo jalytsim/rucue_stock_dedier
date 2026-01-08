@@ -54,6 +54,12 @@ class SettingsTab:
         # Section préférences
         self._create_preferences_section(content)
         
+        # Section imprimante thermique
+        self._create_thermal_printer_section(content)
+        
+        # Section imprimante LASER (NOUVEAU)
+        self._create_laser_printer_section(content)
+        
         # Zone dangereuse
         self._create_danger_zone(content)
         
@@ -164,6 +170,118 @@ class SettingsTab:
             ttk.Entry(type_frame, textvariable=self.settings_vars['receipt_type'], 
                      font=("", font_size)).pack(side=LEFT, padx=5, fill=X, expand=YES, ipady=4)
     
+    def _create_thermal_printer_section(self, parent):
+        """Section imprimante thermique"""
+        thermal_frame = ttk.Labelframe(parent, text="🖨️ Imprimante Thermique", 
+                                      bootstyle="success", padding=10)
+        thermal_frame.pack(fill=X, pady=(0, 10))
+        
+        font_size = 10 if self.is_compact_mode else 11
+        
+        ttk.Label(thermal_frame, text="Configuration imprimante XP-Q300", 
+                 font=("", font_size), bootstyle="secondary").pack(anchor=W, pady=5)
+        
+        if self.is_compact_mode:
+            ttk.Button(thermal_frame, text="🔍 Tester connexion thermique",
+                      command=self.test_thermal_connection, 
+                      bootstyle="success-outline").pack(fill=X, ipady=8, pady=2)
+        else:
+            ttk.Button(thermal_frame, text="🔍 Tester connexion thermique",
+                      command=self.test_thermal_connection, 
+                      bootstyle="success-outline", width=25).pack(pady=5, ipady=8)
+    
+    def _create_laser_printer_section(self, parent):
+        """Section imprimante laser (NOUVEAU)"""
+        laser_frame = ttk.Labelframe(parent, text="🖨️ Imprimante Laser", 
+                                    bootstyle="warning", padding=10)
+        laser_frame.pack(fill=X, pady=(0, 10))
+        
+        font_size = 10 if self.is_compact_mode else 11
+        
+        # Activer impression laser
+        if self.is_compact_mode:
+            laser_enabled_frame = ttk.Frame(laser_frame)
+            laser_enabled_frame.pack(fill=X, pady=5)
+            
+            ttk.Label(laser_enabled_frame, text="Activer impression laser:", 
+                     font=("", font_size, "bold")).pack(anchor=W, pady=1)
+            
+            self.laser_enabled_var = ttk.BooleanVar()
+            ttk.Checkbutton(laser_enabled_frame, variable=self.laser_enabled_var, 
+                           bootstyle="warning-round-toggle").pack(anchor=W, pady=2)
+        else:
+            laser_enabled_frame = ttk.Frame(laser_frame)
+            laser_enabled_frame.pack(fill=X, pady=5)
+            
+            ttk.Label(laser_enabled_frame, text="Activer impression laser:", 
+                     font=("", font_size)).pack(side=LEFT, padx=(0, 10))
+            
+            self.laser_enabled_var = ttk.BooleanVar()
+            ttk.Checkbutton(laser_enabled_frame, variable=self.laser_enabled_var, 
+                           bootstyle="warning-round-toggle").pack(side=LEFT)
+        
+        # Nom de l'imprimante
+        if self.is_compact_mode:
+            ttk.Label(laser_frame, text="Nom de l'imprimante:", 
+                     font=("", font_size, "bold")).pack(anchor=W, pady=1)
+            self.settings_vars['laser_printer_name'] = ttk.StringVar()
+            ttk.Entry(laser_frame, textvariable=self.settings_vars['laser_printer_name'], 
+                     font=("", font_size)).pack(fill=X, ipady=5, pady=2)
+            ttk.Label(laser_frame, text="Ex: HP_LaserJet_1022n", 
+                     font=("", 9), bootstyle="secondary").pack(anchor=W)
+        else:
+            laser_name_frame = ttk.Frame(laser_frame)
+            laser_name_frame.pack(fill=X, pady=5)
+            
+            ttk.Label(laser_name_frame, text="Nom de l'imprimante:", 
+                     width=30, anchor=W, font=("", font_size)).pack(side=LEFT, padx=5)
+            self.settings_vars['laser_printer_name'] = ttk.StringVar()
+            ttk.Entry(laser_name_frame, textvariable=self.settings_vars['laser_printer_name'], 
+                     font=("", font_size)).pack(side=LEFT, padx=5, fill=X, expand=YES, ipady=4)
+            
+            ttk.Label(laser_frame, text="Ex: HP_LaserJet_1022n", 
+                     font=("", 9), bootstyle="secondary").pack(anchor=W, padx=5)
+        
+        # Format papier
+        if self.is_compact_mode:
+            ttk.Label(laser_frame, text="Format papier:", 
+                     font=("", font_size, "bold")).pack(anchor=W, pady=1)
+            self.settings_vars['laser_paper_format'] = ttk.StringVar()
+            ttk.Combobox(laser_frame, textvariable=self.settings_vars['laser_paper_format'],
+                        values=["A6", "A5", "A4"], state="readonly",
+                        font=("", font_size)).pack(fill=X, ipady=5, pady=2)
+        else:
+            format_frame = ttk.Frame(laser_frame)
+            format_frame.pack(fill=X, pady=5)
+            
+            ttk.Label(format_frame, text="Format papier:", 
+                     width=30, anchor=W, font=("", font_size)).pack(side=LEFT, padx=5)
+            self.settings_vars['laser_paper_format'] = ttk.StringVar()
+            ttk.Combobox(format_frame, textvariable=self.settings_vars['laser_paper_format'],
+                        values=["A6", "A5", "A4"], state="readonly",
+                        font=("", font_size)).pack(side=LEFT, padx=5, fill=X, expand=YES, ipady=4)
+        
+        # Boutons de test
+        if self.is_compact_mode:
+            ttk.Button(laser_frame, text="🔍 Tester connexion laser",
+                      command=self.test_laser_connection, 
+                      bootstyle="warning-outline").pack(fill=X, ipady=8, pady=2)
+            
+            ttk.Button(laser_frame, text="🖨️ Imprimer test laser",
+                      command=self.test_laser_print, 
+                      bootstyle="warning").pack(fill=X, ipady=8, pady=2)
+        else:
+            laser_test_frame = ttk.Frame(laser_frame)
+            laser_test_frame.pack(fill=X, pady=(10, 0))
+            
+            ttk.Button(laser_test_frame, text="🔍 Tester connexion laser",
+                      command=self.test_laser_connection, 
+                      bootstyle="warning-outline", width=25).pack(side=LEFT, padx=5, ipady=8)
+            
+            ttk.Button(laser_test_frame, text="🖨️ Imprimer test laser",
+                      command=self.test_laser_print, 
+                      bootstyle="warning", width=25).pack(side=LEFT, padx=5, ipady=8)
+    
     def _create_danger_zone(self, parent):
         """Zone dangereuse"""
         danger_frame = ttk.Labelframe(parent, text="🗑️ Zone dangereuse", 
@@ -221,6 +339,9 @@ class SettingsTab:
             if key == 'company_address':
                 value = value.replace('\n', '\\n')
             var.set(value)
+        
+        # Charger les paramètres laser (NOUVEAU)
+        self.laser_enabled_var.set(settings.get('laser_enabled', 'true') == 'true')
     
     def save_settings(self):
         """Sauvegarder les paramètres"""
@@ -232,9 +353,47 @@ class SettingsTab:
                 value = value.replace('\\n', '\n')
             settings_dict[key] = value
         
+        # Ajouter les paramètres laser (NOUVEAU)
+        settings_dict['laser_enabled'] = 'true' if self.laser_enabled_var.get() else 'false'
+        
         self.controller.save_settings(settings_dict)
         messagebox.showinfo("Succès", "Paramètres enregistrés avec succès !", 
                           parent=self.frame)
+    
+    def test_thermal_connection(self):
+        """Tester la connexion à l'imprimante thermique"""
+        success, message = self.controller.test_thermal_printer()
+        
+        if success:
+            messagebox.showinfo("Succès", message, parent=self.frame)
+        else:
+            messagebox.showerror("Erreur", message, parent=self.frame)
+    
+    def test_laser_connection(self):
+        """Tester la connexion à l'imprimante laser (NOUVEAU)"""
+        success, message = self.controller.test_laser_printer()
+        
+        if success:
+            messagebox.showinfo("Succès", message, parent=self.frame)
+        else:
+            messagebox.showerror("Erreur", message, parent=self.frame)
+    
+    def test_laser_print(self):
+        """Imprimer un reçu de test sur l'imprimante laser (NOUVEAU)"""
+        try:
+            from models.laser_printer import LaserPrinter
+            settings = self.controller.get_settings()
+            printer = LaserPrinter(settings)
+            
+            success, message = printer.test_print()
+            
+            if success:
+                messagebox.showinfo("Succès", message, parent=self.frame)
+            else:
+                messagebox.showerror("Erreur", message, parent=self.frame)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur de test: {str(e)}", 
+                               parent=self.frame)
     
     def clear_history(self):
         """Effacer l'historique"""
