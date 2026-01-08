@@ -302,6 +302,10 @@ class NewReceiptTab:
         # Actions TACTILES TOUJOURS VISIBLES
         if self.is_compact_mode:
             # Mode compact: boutons empilés
+            ttk.Button(footer_frame, text="🖨️ Imprimer Thermique", 
+                      command=self.print_thermal, bootstyle="info").pack(
+                          fill=X, ipady=12, pady=2)
+            
             ttk.Button(footer_frame, text="📄 Générer le PDF", 
                       command=self.generate_receipt, bootstyle="primary").pack(
                           fill=X, ipady=12, pady=2)
@@ -314,19 +318,26 @@ class NewReceiptTab:
                       command=self.reset_form, bootstyle="secondary").pack(
                           fill=X, ipady=12, pady=2)
         else:
-            # Mode normal: boutons côte à côte
-            action_frame = ttk.Frame(footer_frame)
-            action_frame.pack(fill=X, pady=2)
+            # Mode normal: boutons côte à côte (2 lignes)
+            action_frame1 = ttk.Frame(footer_frame)
+            action_frame1.pack(fill=X, pady=2)
             
-            ttk.Button(action_frame, text="📄 Générer PDF", 
+            ttk.Button(action_frame1, text="🖨️ Imprimer Thermique", 
+                      command=self.print_thermal, bootstyle="info", 
+                      width=25).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
+            
+            ttk.Button(action_frame1, text="📄 Générer PDF", 
                       command=self.generate_receipt, bootstyle="primary", 
                       width=20).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
             
-            ttk.Button(action_frame, text="💾 Enregistrer", 
+            action_frame2 = ttk.Frame(footer_frame)
+            action_frame2.pack(fill=X, pady=2)
+            
+            ttk.Button(action_frame2, text="💾 Enregistrer", 
                       command=self.save_receipt_only, bootstyle="success", 
                       width=20).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
             
-            ttk.Button(action_frame, text="🔄 Nouveau", 
+            ttk.Button(action_frame2, text="🔄 Nouveau", 
                       command=self.reset_form, bootstyle="secondary", 
                       width=18).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
     
@@ -467,6 +478,35 @@ class NewReceiptTab:
         
         total = self.controller.get_current_total()
         self.total_var.set(f"{total:,.0f} {currency}")
+    
+    def print_thermal(self):
+        """Imprimer sur l'imprimante thermique"""
+        if not self.controller.get_current_items():
+            messagebox.showwarning("Attention", "Veuillez ajouter au moins un article", 
+                                 parent=self.frame)
+            return
+        
+        client_name = self.client_name_var.get().strip()
+        client_phone = self.client_phone_var.get().strip()
+        
+        # Demander confirmation
+        if not messagebox.askyesno("Confirmation", 
+                                   "Imprimer ce reçu sur l'imprimante thermique ?", 
+                                   parent=self.frame):
+            return
+        
+        success, result = self.controller.print_thermal_receipt(
+            client_name=client_name or "Client",
+            client_phone=client_phone,
+            payment_method="Espèces"
+        )
+        
+        if success:
+            messagebox.showinfo("Succès", result, parent=self.frame)
+            self.reset_form()
+            self.main_window.refresh_all_tabs()
+        else:
+            messagebox.showerror("Erreur", result, parent=self.frame)
     
     def generate_receipt(self):
         """Générer et enregistrer le reçu"""
