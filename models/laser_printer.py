@@ -112,39 +112,77 @@ class LaserPrinter:
         items = self._build_items(data)
         footer = self._build_footer(data)
 
-        total_lines = len(header) + len(items) + len(footer)
+        # On compte le nombre de lignes du footer
+        footer_lines = len(footer)
 
-        # --------- CAS 1 : 1 SEULE PAGE ---------
+        # Calcul total
+        total_lines = len(header) + len(items) + footer_lines
+
+        # ---------------------------------------------------------------------
+        # CAS 1 : TOUT TIENS SUR UNE SEULE PAGE
+        # footer doit être collé en bas → on insère des lignes vides
+        # ---------------------------------------------------------------------
         if total_lines <= self.max_lines_per_page:
-            return "".join(header + items + footer)
+            lines = header + items
 
-        # --------- CAS 2 : MULTI-PAGE ---------
+            # Nombre de lignes à remplir pour pousser le footer en bas
+            padding = self.max_lines_per_page - len(lines) - footer_lines
+
+            for _ in range(padding):
+                lines.append("\n")
+
+            lines.extend(footer)
+            return "".join(lines)
+
+        # ---------------------------------------------------------------------
+        # CAS 2 : MULTIPAGE
+        # Page 1 doit avoir footer en bas
+        # Dernière page footer juste sous les items
+        # ---------------------------------------------------------------------
+
         pages = []
 
-        # Première page : Header + Items jusqu'à limite
+        # PAGE 1 : header + premiers items + footer en bas
         page1 = []
         page1.extend(header)
 
-        lines_left = self.max_lines_per_page - len(page1) - len(footer)
+        # combien de lignes dispo pour les items ?
+        max_items_page1 = self.max_lines_per_page - len(header) - footer_lines
 
-        # Ajoute les items jusqu'à remplir la page
-        page1.extend(items[:lines_left])
+        page1_items = items[:max_items_page1]
+        page1.extend(page1_items)
+
+        # Ajouter padding pour pousser le footer en bas
+        padding = self.max_lines_per_page - len(page1) - footer_lines
+        for _ in range(padding):
+            page1.append("\n")
+
+        page1.extend(footer)
+
         pages.append("".join(page1))
 
-        # Items restants
-        remaining = items[lines_left:]
-        current = []
+        # ---------------------------------------------------------------------
+        # PAGES INTERMÉDIAIRES : uniquement liste d’articles (remplies au max)
+        # ---------------------------------------------------------------------
+
+        remaining = items[max_items_page1:]
+        temp = []
 
         for line in remaining:
-            current.append(line)
+            temp.append(line)
 
-            if len(current) >= self.max_lines_per_page - len(footer):
-                pages.append("".join(current))
-                current = []
+            if len(temp) == self.max_lines_per_page:
+                pages.append("".join(temp))
+                temp = []
 
-        # Ajouter dernier bloc + footer
-        current.extend(footer)
-        pages.append("".join(current))
+        # ---------------------------------------------------------------------
+        # Dernière page : pas besoin de mettre footer en bas
+        # footer juste après les derniers articles
+        # ---------------------------------------------------------------------
+
+        if temp:
+            temp.extend(footer)
+            pages.append("".join(temp))
 
         return "\f".join(pages)
 
