@@ -1,6 +1,7 @@
 """
 Module d'impression thermique pour reçus
 Imprime directement sur l'imprimante XP-Q300 sans passer par PDF
+Version avec espacement réduit
 """
 
 from escpos.printer import Usb
@@ -84,9 +85,7 @@ class ThermalPrinter:
             for line in address.split("\n"):
                 self.printer.text(self.side_by_side("", line))
 
-            self.printer.text("\n")
             self._print_separator('-')
-            self.printer.text("\n")
 
             # ============================
             #    NO FACTURE & DATE
@@ -102,16 +101,14 @@ class ThermalPrinter:
 
             self.printer.text(self.side_by_side(no_text, date_text))
             self.printer.set(bold=False)
-            self.printer.text("\n")
 
             self._print_separator()
-            self.printer.text("\n")
 
             # ============================
             #     LISTE DES ARTICLES
             # ============================
             self.printer.set(align='center', bold=True)
-            self.printer.text("Liste des articles\n\n")
+            self.printer.text("Liste des articles\n")
             self.printer.set(align='left', bold=False)
 
             currency = self.settings.get('currency', 'Ar')
@@ -129,13 +126,12 @@ class ThermalPrinter:
                 unit = item["unit_price"]
                 total = item["total"]
 
-                self.printer.text(f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}\n\n")
+                self.printer.text(f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}\n")
 
             # ============================
             #            TOTAL
             # ============================
             self._print_separator()
-            self.printer.text("\n")
 
             self.printer.set(align='center', bold=True)
             self.printer.text("TOTAL A PAYER\n")
@@ -144,16 +140,16 @@ class ThermalPrinter:
             self.printer.set(width=1, height=1, bold=False)
 
             payment = receipt_data.get("payment_method", "Espèces")
-            self.printer.text(f"\nPaiement: {payment}\n\n")
+            self.printer.text(f"Paiement: {payment}\n")
 
             # ============================
             #       PIED DE PAGE
             # ============================
             self._print_separator()
-            self.printer.text("\nMerci pour votre achat!\n")
+            self.printer.text("Merci pour votre achat!\n")
             self.printer.text("Mankasitraka Tompoko!\n")
 
-            self.printer.text("\n\n\n")
+            self.printer.text("\n\n")
             self.printer.cut()
 
             return True, "Reçu imprimé avec succès"

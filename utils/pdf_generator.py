@@ -1,38 +1,37 @@
 """
-Générateur de PDF pour reçus thermiques (58mm, 80mm)
-Avec support multi-pages : en-tête sur page 1, footer sur dernière page
-Total affiché en haut de page 1 + rappel en bas de dernière page
+Générateur de PDF pour reçus - Support A6 et Thermal (58mm, 80mm)
+Optimisé pour Ubuntu Server avec pagination automatique
+En-tête style thermique : Client à gauche, Société à droite
 """
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import mm
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.pagesizes import A6
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm as mm_unit
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from datetime import datetime
-import os
 
 class ReceiptGenerator:
     def __init__(self, settings):
         self.settings = settings
         self.paper_width = float(settings.get('paper_width', '58'))  # mm
         
-        # Définir la taille de page FIXE pour permettre la pagination
-        # Format optimisé pour impression et agrafage
+        # Définir la taille de page selon le format
         if self.paper_width == 58:
+            # Format thermal 58mm -> Impression A6 pour agrafage
             self.page_width = 105 * mm_unit
-            self.page_height = 105 * mm_unit  # Hauteur fixe pour pagination
+            self.page_height = 148 * mm_unit
         else:  # 80mm
-            self.page_width = 148 * mm_unit
-            self.page_height = 148 * mm_unit  # Hauteur fixe pour pagination
+            # Format thermal 80mm -> Impression A6 pour agrafage
+            self.page_width = 105 * mm_unit
+            self.page_height = 148 * mm_unit
         
         self.page_size = (self.page_width, self.page_height)
         self.margin = 3 * mm_unit
     
     def generate_receipt(self, receipt_data, output_path):
-        """Générer un reçu PDF avec pagination automatique"""
+        """Générer un reçu PDF optimisé avec pagination automatique"""
         
-        # Créer le document avec fonction de pagination personnalisée
         doc = SimpleDocTemplate(
             output_path,
             pagesize=self.page_size,
@@ -42,243 +41,206 @@ class ReceiptGenerator:
             bottomMargin=self.margin
         )
         
-        # Construire le contenu
         story = []
         styles = self._get_styles()
         
-        # ========== PAGE 1 : EN-TÊTE AVEC INFO CLIENT À GAUCHE ET ENTREPRISE À DROITE ==========
+        # ========== EN-TÊTE STYLE THERMIQUE (CLIENT | SOCIÉTÉ) ==========
+        story.extend(self._build_thermal_style_header(receipt_data, styles))
         
-        # Créer un tableau pour layout côte à côte
-        header_data = []
+        # ========== ARTICLES AVEC PAGINATION ==========
+        story.extend(self._build_items_optimized(receipt_data['items'], styles))
         
-        # Colonne gauche : Info client
-        left_content = []
-        if receipt_data.get('client_name'):
-            left_content.append(Paragraph("<b>CLIENT</b>", styles['LeftBold']))
-            left_content.append(Paragraph(receipt_data['client_name'], styles['Left']))
-            if receipt_data.get('client_phone'):
-                left_content.append(Paragraph(f"Tél: {receipt_data['client_phone']}", styles['Left']))
-        else:
-            left_content.append(Paragraph("", styles['Left']))
-        
-        # Colonne droite : Info entreprise
-        right_content = self._build_header(styles)
-        
-        # Créer le tableau avec deux colonnes
-        col_width = (self.page_width - (2 * self.margin)) / 2
-        header_table = Table(
-            [[left_content, right_content]],
-            colWidths=[col_width, col_width]
-        )
-        header_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('ALIGN', (0, 0), (0, 0), 'LEFT'),
-            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-        ]))
-        
-        story.append(header_table)
+        # ========== FOOTER ==========
         story.append(Spacer(1, 3 * mm_unit))
-        
-        # Ligne de séparation
         story.append(self._create_line())
-        story.append(Spacer(1, 2 * mm_unit))
+        story.append(Spacer(1, 1 * mm_unit))
         
-        # Type de vente
-        receipt_type = self.settings.get('receipt_type', 'Vente au détail')
-        story.append(Paragraph(receipt_type, styles['Center']))
-        story.append(Spacer(1, 2 * mm_unit))
-        
-        # Informations du reçu (N° et Date)
-        story.extend(self._build_receipt_info(receipt_data, styles))
-        story.append(Spacer(1, 2 * mm_unit))
-        
-        # Ligne de séparation
-        story.append(self._create_line())
-        story.append(Spacer(1, 2 * mm_unit))
-        
-        # ========== TOTAL À PAYER (EN HAUT DE PAGE 1) ==========
-        story.extend(self._build_total_header(receipt_data, styles))
-        story.append(Spacer(1, 3 * mm_unit))
-        
-        # Ligne de séparation
-        story.append(self._create_line())
-        story.append(Spacer(1, 2 * mm_unit))
-        
-        # ========== ARTICLES (AVEC PAGINATION AUTOMATIQUE) ==========
-        story.append(Paragraph("<b>Liste des articles</b>", styles['CenterBold']))
-        story.append(Spacer(1, 2 * mm_unit))
-        
-        # Articles - Pagination automatique, chaque article reste intact
-        story.extend(self._build_items_paginated(receipt_data['items'], styles))
-        
-        # ========== FOOTER (UNIQUEMENT DERNIÈRE PAGE) ==========
-        
-        # Espacement avant footer
-        story.append(Spacer(1, 5 * mm_unit))
-        
-        # Ligne de séparation avant footer
-        story.append(self._create_line())
-        story.append(Spacer(1, 2 * mm_unit))
-        
-        # Rappel du total (sur dernière page)
         story.extend(self._build_total_footer(receipt_data, styles))
-        story.append(Spacer(1, 3 * mm_unit))
         
-        # Montant en lettres (optionnel)
-        if 'amount_in_words' in receipt_data:
-            story.append(Paragraph(f"<i>{receipt_data['amount_in_words']}</i>", styles['Small']))
-            story.append(Spacer(1, 3 * mm_unit))
-        
-        # Pied de page final
-        story.append(self._create_line())
         story.append(Spacer(1, 2 * mm_unit))
-        story.append(Paragraph("Merci pour votre achat!", styles['Center']))
-        story.append(Paragraph("Mankasitraka Tompoko!", styles['CenterItalic']))
+        story.append(Paragraph("Merci pour votre achat!", styles['CenterSmall']))
+        story.append(Paragraph("Mankasitraka Tompoko!", styles['CenterItalicSmall']))
         
-        # Générer le PDF avec gestion des pages
-        doc.build(story, onFirstPage=self._on_first_page, onLaterPages=self._on_later_pages)
+        doc.build(story, onLaterPages=self._on_later_pages)
         
         return output_path
     
-    def _on_first_page(self, canvas, doc):
-        """Callback pour la première page - pas de footer de pagination"""
-        pass
-    
     def _on_later_pages(self, canvas, doc):
-        """Callback pour les pages suivantes - numérotation"""
+        """Numérotation des pages (pages 2+)"""
         canvas.saveState()
-        
-        # Numéro de page (en bas au centre)
         page_num = canvas.getPageNumber()
-        text = f"Page {page_num}"
-        
-        canvas.setFont('Helvetica', 7 if self.paper_width == 58 else 8)
-        canvas.drawCentredString(
-            self.page_width / 2,
-            10 * mm_unit,
-            text
-        )
-        
+        if page_num > 1:
+            canvas.setFont('Helvetica', 6)
+            canvas.drawCentredString(
+                self.page_width / 2,
+                8 * mm_unit,
+                f"Page {page_num}"
+            )
         canvas.restoreState()
     
     def _get_styles(self):
-        """Définir les styles"""
+        """Styles optimisés pour A6"""
         styles = {}
         
-        font_size = 7 if self.paper_width == 58 else 9
-        
-        styles['Header'] = ParagraphStyle(
-            'Header',
-            fontSize=font_size + 2,
-            leading=font_size + 4,
-            alignment=TA_CENTER,
+        # En-têtes
+        styles['HeaderBold'] = ParagraphStyle(
+            'HeaderBold',
+            fontSize=8,
+            leading=9,
+            alignment=TA_LEFT,
             fontName='Helvetica-Bold'
         )
         
+        styles['HeaderBoldRight'] = ParagraphStyle(
+            'HeaderBoldRight',
+            fontSize=8,
+            leading=9,
+            alignment=TA_RIGHT,
+            fontName='Helvetica-Bold'
+        )
+        
+        # Texte très petit (infos légales)
+        styles['Tiny'] = ParagraphStyle(
+            'Tiny',
+            fontSize=5,
+            leading=6,
+            alignment=TA_LEFT,
+            fontName='Helvetica'
+        )
+        
+        styles['TinyRight'] = ParagraphStyle(
+            'TinyRight',
+            fontSize=5,
+            leading=6,
+            alignment=TA_RIGHT,
+            fontName='Helvetica'
+        )
+        
+        # Texte petit (articles)
+        styles['Small'] = ParagraphStyle(
+            'Small',
+            fontSize=6,
+            leading=7,
+            alignment=TA_LEFT,
+            fontName='Helvetica'
+        )
+        
+        styles['SmallBold'] = ParagraphStyle(
+            'SmallBold',
+            fontSize=6,
+            leading=7,
+            alignment=TA_LEFT,
+            fontName='Helvetica-Bold'
+        )
+        
+        # Centré
         styles['Center'] = ParagraphStyle(
             'Center',
-            fontSize=font_size,
-            leading=font_size + 2,
+            fontSize=6,
+            leading=7,
             alignment=TA_CENTER,
             fontName='Helvetica'
         )
         
         styles['CenterBold'] = ParagraphStyle(
             'CenterBold',
-            fontSize=font_size,
-            leading=font_size + 2,
+            fontSize=7,
+            leading=8,
             alignment=TA_CENTER,
             fontName='Helvetica-Bold'
         )
         
-        styles['CenterItalic'] = ParagraphStyle(
-            'CenterItalic',
-            fontSize=font_size - 1,
-            leading=font_size + 1,
+        styles['CenterSmall'] = ParagraphStyle(
+            'CenterSmall',
+            fontSize=6,
+            leading=7,
+            alignment=TA_CENTER,
+            fontName='Helvetica'
+        )
+        
+        styles['CenterItalicSmall'] = ParagraphStyle(
+            'CenterItalicSmall',
+            fontSize=5,
+            leading=6,
             alignment=TA_CENTER,
             fontName='Helvetica-Oblique'
         )
         
-        styles['Left'] = ParagraphStyle(
-            'Left',
-            fontSize=font_size,
-            leading=font_size + 2,
-            alignment=TA_LEFT,
-            fontName='Helvetica'
-        )
-        
-        styles['LeftBold'] = ParagraphStyle(
-            'LeftBold',
-            fontSize=font_size,
-            leading=font_size + 2,
-            alignment=TA_LEFT,
-            fontName='Helvetica-Bold'
-        )
-        
-        styles['Small'] = ParagraphStyle(
-            'Small',
-            fontSize=font_size - 1,
-            leading=font_size + 1,
-            alignment=TA_LEFT,
-            fontName='Helvetica'
-        )
-        
+        # Total (gros)
         styles['Total'] = ParagraphStyle(
             'Total',
-            fontSize=font_size + 3,
-            leading=font_size + 5,
+            fontSize=10,
+            leading=11,
             alignment=TA_CENTER,
             fontName='Helvetica-Bold'
         )
         
         return styles
     
-    def _build_header(self, styles):
-        """Construire l'en-tête (uniquement page 1) - retourne une liste d'éléments"""
+    def _build_thermal_style_header(self, receipt_data, styles):
+        """
+        En-tête style thermique : Client à gauche, Société à droite
+        Format optimisé pour maximiser l'espace (8-10 articles page 1)
+        """
         elements = []
+        col_width = (self.page_width - (2 * self.margin)) / 2
         
-        # Nom de l'entreprise
-        company_name = self.settings.get('company_name', '')
-        elements.append(Paragraph(f"<b>{company_name}</b>", styles['Header']))
+        # ========== LIGNE 1 : CLIENT | NOM SOCIÉTÉ ==========
+        left_col = [Paragraph("<b>CLIENT</b>", styles['HeaderBold'])]
+        right_col = [Paragraph(f"<b>{self.settings.get('company_name', '')}</b>", styles['HeaderBoldRight'])]
         
-        # Adresse
-        address = self.settings.get('company_address', '').replace('\n', '<br/>')
-        elements.append(Paragraph(address, styles['Center']))
+        header_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
+        header_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+        elements.append(header_table)
         
-        # Coordonnées
-        phone = self.settings.get('company_phone', '')
-        email = self.settings.get('company_email', '')
-        if phone:
-            elements.append(Paragraph(f"Tél: {phone}", styles['Center']))
-        if email:
-            elements.append(Paragraph(f"E-mail: {email}", styles['Center']))
+        # ========== LIGNE 2 : NOM CLIENT | TÉL SOCIÉTÉ ==========
+        client_name = receipt_data.get('client_name', '(Non spécifié)')
+        company_phone = self.settings.get('company_phone', '')
         
-        # Informations légales (petite taille)
+        left_col = [Paragraph(client_name, styles['Tiny'])]
+        right_col = [Paragraph(company_phone, styles['TinyRight'])]
+        
+        line2_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
+        line2_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+        elements.append(line2_table)
+        
+        # ========== LIGNE 3 : TÉL CLIENT | NIF SOCIÉTÉ ==========
+        client_phone = receipt_data.get('client_phone', '')
         nif = self.settings.get('company_nif', '')
+        
+        left_col = [Paragraph(client_phone, styles['Tiny'])]
+        right_col = [Paragraph(f"NIF: {nif}" if nif else "", styles['TinyRight'])]
+        
+        line3_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
+        line3_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+        elements.append(line3_table)
+        
+        # ========== LIGNE 4 : VIDE | STAT ==========
         stat = self.settings.get('company_stat', '')
-        rc = self.settings.get('company_rc', '')
-        ce = self.settings.get('company_ce', '')
-        cif = self.settings.get('company_cif', '')
-        
-        if nif:
-            elements.append(Paragraph(f"NIF: {nif}", styles['Small']))
         if stat:
-            elements.append(Paragraph(f"STAT: {stat}", styles['Small']))
-        if rc and ce:
-            elements.append(Paragraph(f"R.C: {rc} - CE: {ce}", styles['Small']))
-        if cif:
-            elements.append(Paragraph(f"CIF: {cif}", styles['Small']))
+            left_col = [Paragraph("", styles['Tiny'])]
+            right_col = [Paragraph(f"STAT: {stat}", styles['TinyRight'])]
+            
+            stat_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
+            stat_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+            elements.append(stat_table)
         
-        return elements
-    
-    def _build_receipt_info(self, receipt_data, styles):
-        """Construire les infos du reçu"""
-        elements = []
+        # ========== LIGNES SUIVANTES : VIDE | ADRESSE ==========
+        address = self.settings.get('company_address', '')
+        for line in address.split('\n'):
+            if line.strip():
+                left_col = [Paragraph("", styles['Tiny'])]
+                right_col = [Paragraph(line.strip(), styles['TinyRight'])]
+                
+                addr_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
+                addr_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+                elements.append(addr_table)
         
-        # Numéro de facture
-        elements.append(Paragraph(f"<b>N°: {receipt_data['receipt_number']}</b>", styles['Left']))
+        elements.append(Spacer(1, 0.5 * mm_unit))
+        elements.append(self._create_line())
+        elements.append(Spacer(1, 0.5 * mm_unit))
         
-        # Date
+        # ========== N° FACTURE | DATE (SUR UNE LIGNE) ==========
         date_str = receipt_data['date']
         try:
             date_obj = datetime.strptime(date_str, '%Y-%m-%d')
@@ -286,89 +248,95 @@ class ReceiptGenerator:
         except:
             formatted_date = date_str
         
-        elements.append(Paragraph(f"Date: {formatted_date}", styles['Left']))
+        left_col = [Paragraph(f"<b>No: {receipt_data['receipt_number']}</b>", styles['SmallBold'])]
+        right_col = [Paragraph(f"<b>Date: {formatted_date}</b>", styles['SmallBold'])]
         
-        return elements
-    
-    def _build_client_info(self, receipt_data, styles):
-        """Construire les infos client"""
-        elements = []
+        info_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
+        info_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+        elements.append(info_table)
         
-        client_name = receipt_data.get('client_name', '')
-        client_phone = receipt_data.get('client_phone', '')
-        
-        if client_name:
-            elements.append(Paragraph(f"<b>Client:</b> {client_name}", styles['Left']))
-        if client_phone:
-            elements.append(Paragraph(f"Tél: {client_phone}", styles['Left']))
-        
-        return elements
-    
-    def _build_total_header(self, receipt_data, styles):
-        """Construire l'affichage du total en haut de page 1"""
-        elements = []
-        
-        currency = self.settings.get('currency', 'Ar')
-        total = receipt_data['total']
-        
-        elements.append(Paragraph(f"<b>TOTAL À PAYER</b>", styles['CenterBold']))
-        elements.append(Paragraph(f"<b>{total:,.2f} {currency}</b>", styles['Total']))
-        
-        return elements
-    
-    def _build_total_footer(self, receipt_data, styles):
-        """Construire le rappel du total en bas de dernière page"""
-        elements = []
-        
-        currency = self.settings.get('currency', 'Ar')
-        total = receipt_data['total']
-        
-        elements.append(Paragraph(f"<b>TOTAL À PAYER (Rappel)</b>", styles['CenterBold']))
-        elements.append(Paragraph(f"<b>{total:,.2f} {currency}</b>", styles['Total']))
-        
-        # Mode de paiement
-        payment_method = receipt_data.get('payment_method', 'Espèces')
+        elements.append(Spacer(1, 0.5 * mm_unit))
+        elements.append(self._create_line())
         elements.append(Spacer(1, 1 * mm_unit))
-        elements.append(Paragraph(f"Paiement: {payment_method}", styles['Center']))
+        
+        # ========== TOTAL À PAYER ==========
+        currency = self.settings.get('currency', 'Ar')
+        total = receipt_data['total']
+        elements.append(Paragraph("TOTAL À PAYER", styles['CenterBold']))
+        elements.append(Paragraph(f"{total:,.0f} {currency}", styles['Total']))
+        
+        elements.append(Spacer(1, 1 * mm_unit))
+        elements.append(self._create_line())
+        elements.append(Spacer(1, 1 * mm_unit))
+        
+        # ========== TITRE LISTE ARTICLES ==========
+        elements.append(Paragraph("<b>LISTE DES ARTICLES</b>", styles['CenterBold']))
+        elements.append(Spacer(1, 1 * mm_unit))
         
         return elements
     
-    def _build_items_paginated(self, items, styles):
-        """Construire la liste des articles avec pagination automatique"""
+    def _build_items_optimized(self, items, styles):
+        """
+        Articles ultra-compacts - 2 lignes par article
+        Permet 8-10 articles page 1, 14+ articles pages suivantes
+        """
         elements = []
         
         currency = self.settings.get('currency', 'Ar')
         
-        # Créer des groupes d'articles pour contrôler la pagination
-        # Chaque article est un "bloc" qui ne sera pas coupé entre deux pages
         for i, item in enumerate(items, 1):
-            # Créer un groupe pour cet article (ne sera pas coupé)
             item_elements = []
             
-            # Numéro et nom du produit
-            item_elements.append(Paragraph(f"<b>{i}. {item['name']}</b>", styles['Left']))
+            # Ligne 1: N° + Nom (tronqué si nécessaire)
+            name = item['name']
+            if len(name) > 35:
+                name = name[:32] + "..."
             
-            # Quantité x Prix unitaire = Total
-            qty_line = f"   {item['quantity']} x {item['unit_price']:,.2f} {currency} = <b>{item['total']:,.2f} {currency}</b>"
-            item_elements.append(Paragraph(qty_line, styles['Left']))
-            item_elements.append(Spacer(1, 2 * mm_unit))
+            item_elements.append(
+                Paragraph(f"{i}. {name}", styles['SmallBold'])
+            )
             
-            # Garder l'article ensemble (ne pas couper entre pages)
+            # Ligne 2: Qté x Prix = Total
+            qty = item['quantity']
+            unit = item['unit_price']
+            total = item['total']
+            
+            detail = f"   {qty:.0f} x {unit:,.0f} = <b>{total:,.0f} {currency}</b>"
+            item_elements.append(
+                Paragraph(detail, styles['Small'])
+            )
+            
+            # Micro-espace entre articles (0.5mm)
+            item_elements.append(Spacer(1, 0.5 * mm_unit))
+            
+            # Garder l'article ensemble (pas de coupure entre pages)
             elements.append(KeepTogether(item_elements))
         
         return elements
     
+    def _build_total_footer(self, receipt_data, styles):
+        """Footer avec rappel du total"""
+        elements = []
+        
+        currency = self.settings.get('currency', 'Ar')
+        total = receipt_data['total']
+        
+        elements.append(Paragraph("TOTAL À PAYER", styles['CenterBold']))
+        elements.append(Paragraph(f"{total:,.0f} {currency}", styles['Total']))
+        
+        payment_method = receipt_data.get('payment_method', 'Espèces')
+        elements.append(Spacer(1, 0.5 * mm_unit))
+        elements.append(Paragraph(f"Paiement: {payment_method}", styles['Center']))
+        
+        return elements
+    
     def _create_line(self):
-        """Créer une ligne de séparation"""
+        """Ligne de séparation fine"""
         line_width = self.page_width - (2 * self.margin)
         
-        line_table = Table(
-            [['']],
-            colWidths=[line_width]
-        )
-        
+        line_table = Table([['']],colWidths=[line_width])
         line_table.setStyle(TableStyle([
-            ('LINEABOVE', (0, 0), (-1, 0), 0.5, colors.black),
+            ('LINEABOVE', (0, 0), (-1, 0), 0.3, colors.black),
         ]))
         
         return line_table
