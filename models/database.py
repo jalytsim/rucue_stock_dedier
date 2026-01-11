@@ -60,12 +60,12 @@ class Database:
         
         # Initialiser les paramètres par défaut
         default_settings = {
-            'company_name': 'Magasin Ly',
-            'company_address': '85 RUE DE LIEGE TSARALALANA\nANTANANARIVO 101',
-            'company_phone': '020 76 231 43',
-            'company_email': 'cf@moov.mg',
-            'company_nif': '2000022547',
-            'company_stat': '46101 11 1984 0 00029',
+            'company_name': 'MAGASIN Ly',
+            'company_address': 'PAV N:28 TSENEA MIARINARIVO',
+            'company_phone': '033 01 830 14',
+            'company_email': 'contact@magasinly.mg',
+            'company_nif': '3000262366',
+            'company_stat': '13 19840 30001',
             'company_rc': '2003A00087',
             'company_ce': '520/FOK/FIATA',
             'company_cif': '0189577 DGI-M du 03/06/2025',

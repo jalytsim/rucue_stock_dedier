@@ -1,7 +1,7 @@
 """
 Module d'impression thermique pour reçus
 Imprime directement sur l'imprimante XP-Q300 sans passer par PDF
-Version avec espacement réduit
+Version avec espacement réduit - Fournisseur à gauche, Client à droite
 """
 
 from escpos.printer import Usb
@@ -29,8 +29,8 @@ class ThermalPrinter:
 
     def side_by_side(self, left, right):
         """
-        Affiche réellement deux textes sur la même ligne (80mm = 48 chars).
-        Gestion correcte des espaces et troncature minimale.
+        Affiche deux textes sur la même ligne (80mm = 48 chars).
+        LEFT = FOURNISSEUR, RIGHT = CLIENT
         """
         left = left.strip()
         right = right.strip()
@@ -58,32 +58,33 @@ class ThermalPrinter:
             self.printer.set(align='left', bold=True)
 
             # ============================
-            #    CLIENT & SOCIETE
+            #    FOURNISSEUR & CLIENT (inversé)
             # ============================
-            self.printer.text(self.side_by_side("CLIENT", self.settings.get('company_name', '')))
+            # LIGNE 1: NOM SOCIETE | CLIENT
+            self.printer.text(self.side_by_side(self.settings.get('company_name', ''), "CLIENT"))
             self.printer.set(bold=False)
 
-            # CLIENT NOM / TELEPHONE SOCIETE
+            # LIGNE 2: TELEPHONE SOCIETE | NOM CLIENT
             self.printer.text(self.side_by_side(
-                receipt_data.get('client_name', '(Non spécifié)'),
-                self.settings.get('company_phone', '')
+                self.settings.get('company_phone', ''),
+                receipt_data.get('client_name', '(Non specifie)')
             ))
 
-            # TEL CLIENT / NIF SOCIETE
+            # LIGNE 3: NIF SOCIETE | TEL CLIENT
             self.printer.text(self.side_by_side(
-                receipt_data.get('client_phone', ''),
-                f"NIF: {self.settings.get('company_nif', '')}" if self.settings.get('company_nif') else ""
+                f"NIF: {self.settings.get('company_nif', '')}" if self.settings.get('company_nif') else "",
+                receipt_data.get('client_phone', '')
             ))
 
-            # STAT
+            # LIGNE 4: STAT | (vide)
             stat = self.settings.get('company_stat', '')
             if stat:
-                self.printer.text(self.side_by_side("", f"STAT: {stat}"))
+                self.printer.text(self.side_by_side(f"STAT: {stat}", ""))
 
-            # Adresse sur plusieurs lignes
+            # LIGNES SUIVANTES: ADRESSE | (vide)
             address = self.settings.get('company_address', '')
             for line in address.split("\n"):
-                self.printer.text(self.side_by_side("", line))
+                self.printer.text(self.side_by_side(line, ""))
 
             self._print_separator('-')
 
