@@ -61,7 +61,7 @@ class Database:
         # Initialiser les paramètres par défaut
         default_settings = {
             'company_name': 'MAGASIN Ly',
-            'company_address': 'PAV N:28 TSENEA MIARINARIVO',
+            'company_address': 'PAV No: 28 TSENEA \nMIARINARIVO 117',
             'company_phone': '033 01 830 14',
             'company_email': 'contact@magasinly.mg',
             'company_nif': '3000262366',
