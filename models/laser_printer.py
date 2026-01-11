@@ -1,6 +1,7 @@
 """
 Module d'impression laser pour reçus
 Imprime sur imprimante HP LaserJet 1022n en format A6
+Utilise le même format que l'impression thermique
 """
 
 import subprocess
@@ -15,6 +16,8 @@ class LaserPrinter:
         # Nom de l'imprimante (configurable dans les paramètres)
         self.printer_name = settings.get('laser_printer_name', 'HP_LaserJet_1022n')
         self.paper_format = settings.get('laser_paper_format', 'A6')
+        # Largeur de ligne pour A6 (48 caractères comme thermique)
+        self.line_width = 48
     
     def check_connection(self):
         """Vérifier si l'imprimante est disponible"""
@@ -34,55 +37,82 @@ class LaserPrinter:
         except Exception as e:
             return False, f"Erreur de vérification: {str(e)}"
     
+    def _print_separator(self, char='='):
+        """Créer une ligne de séparation"""
+        return char * self.line_width + "\n"
+    
+    def side_by_side(self, left, right):
+        """
+        Affiche deux textes sur la même ligne (48 chars pour A6)
+        Même logique que thermal_printer
+        """
+        left = left.strip()
+        right = right.strip()
+
+        total_len = len(left) + len(right)
+
+        if total_len >= self.line_width:
+            # Tronquer uniquement ce qui dépasse
+            excess = total_len - self.line_width + 1
+            if len(right) > len(left):
+                right = right[:-excess]
+            else:
+                left = left[:-excess]
+
+        spaces = self.line_width - len(left) - len(right)
+        return left + (" " * spaces) + right + "\n"
+    
     def _format_receipt_text(self, receipt_data):
-        """Formater le reçu en texte brut pour impression"""
+        """Formater le reçu - IDENTIQUE au format thermique"""
         lines = []
-        width = 48  # Largeur en caractères pour A6
         
-        # En-tête entreprise
-        lines.append("=" * width)
-        lines.append(self.settings.get('company_name', '').center(width))
-        lines.append("=" * width)
+        # ============================
+        #    CLIENT & SOCIETE
+        # ============================
+        lines.append(self.side_by_side("CLIENT", self.settings.get('company_name', '')))
         
-        address = self.settings.get('company_address', '')
-        for line in address.split('\n'):
-            lines.append(line.center(width))
+        # CLIENT NOM / TELEPHONE SOCIETE
+        lines.append(self.side_by_side(
+            receipt_data.get('client_name', '(Non spécifié)'),
+            self.settings.get('company_phone', '')
+        ))
         
-        phone = self.settings.get('company_phone', '')
-        if phone:
-            lines.append(f"Tel: {phone}".center(width))
+        # TEL CLIENT / NIF SOCIETE
+        lines.append(self.side_by_side(
+            receipt_data.get('client_phone', ''),
+            f"NIF: {self.settings.get('company_nif', '')}" if self.settings.get('company_nif') else ""
+        ))
         
-        nif = self.settings.get('company_nif', '')
+        # STAT
         stat = self.settings.get('company_stat', '')
-        if nif:
-            lines.append(f"NIF: {nif}".center(width))
         if stat:
-            lines.append(f"STAT: {stat}".center(width))
+            lines.append(self.side_by_side("", f"STAT: {stat}"))
         
-        lines.append("")
-        lines.append("-" * width)
+        # Adresse sur plusieurs lignes
+        address = self.settings.get('company_address', '')
+        for line in address.split("\n"):
+            lines.append(self.side_by_side("", line))
         
-        # Informations client et reçu
-        lines.append(f"CLIENT: {receipt_data.get('client_name', 'Non specifie')}")
-        if receipt_data.get('client_phone'):
-            lines.append(f"Tel: {receipt_data['client_phone']}")
+        lines.append(self._print_separator('-'))
         
-        lines.append("")
-        lines.append(f"No: {receipt_data['receipt_number']}")
-        
+        # ============================
+        #    NO FACTURE & DATE
+        # ============================
+        no_text = f"No: {receipt_data['receipt_number']}"
         try:
             d = datetime.strptime(receipt_data['date'], "%Y-%m-%d")
-            date_text = d.strftime('%d/%m/%Y')
+            date_text = f"Date: {d.strftime('%d/%m/%Y')}"
         except:
-            date_text = receipt_data['date']
+            date_text = f"Date: {receipt_data['date']}"
         
-        lines.append(f"Date: {date_text}")
-        lines.append("")
-        lines.append("=" * width)
+        lines.append(self.side_by_side(no_text, date_text))
         
-        # Liste des articles
-        lines.append("LISTE DES ARTICLES".center(width))
-        lines.append("")
+        lines.append(self._print_separator())
+        
+        # ============================
+        #     LISTE DES ARTICLES
+        # ============================
+        lines.append("Liste des articles".center(self.line_width) + "\n")
         
         currency = self.settings.get('currency', 'Ar')
         
@@ -91,40 +121,40 @@ class LaserPrinter:
             if len(name) > 44:
                 name = name[:41] + "..."
             
-            lines.append(f"{i}. {name}")
+            lines.append(f"{i}. {name}\n")
             
             qty = item["quantity"]
             unit = item["unit_price"]
             total = item["total"]
             
-            line_detail = f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}"
-            lines.append(line_detail)
-            lines.append("")
+            lines.append(f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}\n")
         
-        # Total
-        lines.append("=" * width)
-        lines.append("")
-        lines.append("TOTAL A PAYER".center(width))
-        lines.append(f"{receipt_data['total']:,.0f} {currency}".center(width))
-        lines.append("")
+        # ============================
+        #            TOTAL
+        # ============================
+        lines.append(self._print_separator())
         
-        payment = receipt_data.get("payment_method", "Especes")
-        lines.append(f"Paiement: {payment}".center(width))
-        lines.append("")
+        lines.append("TOTAL A PAYER".center(self.line_width) + "\n")
+        lines.append(f"{receipt_data['total']:,.0f} {currency}".center(self.line_width) + "\n")
         
-        # Pied de page
-        lines.append("-" * width)
-        lines.append("Merci pour votre achat!".center(width))
-        lines.append("Mankasitraka Tompoko!".center(width))
-        lines.append("")
-        lines.append("")
+        payment = receipt_data.get("payment_method", "Espèces")
+        lines.append(f"Paiement: {payment}".center(self.line_width) + "\n")
         
-        return "\n".join(lines)
+        # ============================
+        #       PIED DE PAGE
+        # ============================
+        lines.append(self._print_separator())
+        lines.append("Merci pour votre achat!".center(self.line_width) + "\n")
+        lines.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
+        
+        lines.append("\n\n")
+        
+        return "".join(lines)
     
     def print_receipt(self, receipt_data):
         """Imprimer le reçu sur l'imprimante laser"""
         try:
-            # Formater le contenu
+            # Formater le contenu (identique au thermique)
             text_content = self._format_receipt_text(receipt_data)
             
             # Créer un fichier temporaire
