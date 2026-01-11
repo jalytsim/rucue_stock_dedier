@@ -14,7 +14,7 @@ class LaserPrinter:
         self.line_width = 40
 
         # Hauteur réelle utilisable ≈ 36 lignes
-        self.max_lines_per_page = 36
+        self.max_lines_per_page = 43
 
     # ----------------- SECTION HELPERS -----------------
 
