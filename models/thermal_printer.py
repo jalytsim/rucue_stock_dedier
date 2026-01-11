@@ -61,7 +61,7 @@ class ThermalPrinter:
             #    FOURNISSEUR & CLIENT (inversé)
             # ============================
             # LIGNE 1: NOM SOCIETE | CLIENT
-            self.printer.text(self.side_by_side(self.settings.get('company_name', ''), "CLIENT"))
+            self.printer.text(self.side_by_side(self.settings.get('company_name', ''), "DOIT"))
             self.printer.set(bold=False)
 
             # LIGNE 2: TELEPHONE SOCIETE | NOM CLIENT

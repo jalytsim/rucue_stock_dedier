@@ -42,7 +42,7 @@ class LaserPrinter:
     def _build_header(self, data):
         h = []
 
-        h.append(self.side_by_side(self.settings.get('company_name', ''), "CLIENT"))
+        h.append(self.side_by_side(self.settings.get('company_name', ''), "DOIT"))
         h.append(self.side_by_side(self.settings.get('company_phone', ''), data.get('client_name', '')))
         h.append(self.side_by_side(f"NIF: {self.settings.get('company_nif', '')}", data.get('client_phone', '')))
         
@@ -56,7 +56,7 @@ class LaserPrinter:
         h.append(self._sep('-'))
 
         # Numéro et date
-        no = f"No: {data['receipt_number']}"
+        no = f" "
         try:
             d = datetime.strptime(data['date'], "%Y-%m-%d")
             date = f"Date: {d.strftime('%d/%m/%Y')}"
@@ -122,17 +122,21 @@ class LaserPrinter:
         # CAS 1 : TOUT TIENS SUR UNE SEULE PAGE
         # footer doit être collé en bas → on insère des lignes vides
         # ---------------------------------------------------------------------
+        # CAS 1 : TOUT TIENS SUR UNE SEULE PAGE — FOOTER EN BAS
         if total_lines <= self.max_lines_per_page:
+            
             lines = header + items
-
-            # Nombre de lignes à remplir pour pousser le footer en bas
-            padding = self.max_lines_per_page - len(lines) - footer_lines
-
-            for _ in range(padding):
+            
+            # Compter les lignes réelles du footer
+            footer_count = sum(f.count("\n") for f in footer)
+            
+            # Répéter jusqu'à ce que le footer touche la dernière ligne
+            while len(lines) + footer_count < self.max_lines_per_page:
                 lines.append("\n")
-
+            
             lines.extend(footer)
             return "".join(lines)
+
 
         # ---------------------------------------------------------------------
         # CAS 2 : MULTIPAGE
