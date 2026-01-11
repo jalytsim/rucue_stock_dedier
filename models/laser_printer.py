@@ -9,42 +9,26 @@ class LaserPrinter:
         self.settings = settings
         self.printer_name = settings.get('laser_printer_name', 'HP_LaserJet_1022n')
         self.paper_format = settings.get('laser_paper_format', 'Custom.105x148mm')
-        self.line_width = 48
 
-        # Avec cpi=12 & lpi=8 sur A6 ≈ 40 lignes max
-        self.max_lines_per_page = 40
+        # Largeur réelle HP LaserJet sur A6 ≈ 40 colonnes
+        self.line_width = 40
 
-    def check_connection(self):
-        """Vérifier si l'imprimante existe et répond"""
-        try:
-            result = subprocess.run(
-                ["lpstat", "-p", self.printer_name],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                return True, f"Imprimante {self.printer_name} disponible"
-            return False, f"Imprimante {self.printer_name} non trouvée"
-        except FileNotFoundError:
-            return False, "Commande 'lpstat' introuvable"
-        except Exception as e:
-            return False, f"Erreur: {e}"
+        # Hauteur réelle utilisable ≈ 36 lignes
+        self.max_lines_per_page = 36
 
-    # --------------------------------------------------------
-    #   SECTIONS : HEADER / ITEMS / FOOTER
-    # --------------------------------------------------------
+    # ----------------- SECTION HELPERS -----------------
 
-    def _print_separator(self, char='='):
+    def _sep(self, char='='):
         return char * self.line_width + "\n"
 
     def side_by_side(self, left, right):
         left = left.strip()
         right = right.strip()
 
-        total_len = len(left) + len(right)
-        if total_len >= self.line_width:
-            excess = total_len - self.line_width + 1
+        total = len(left) + len(right)
+
+        if total >= self.line_width:
+            excess = total - self.line_width + 1
             if len(right) > len(left):
                 right = right[:-excess]
             else:
@@ -53,73 +37,74 @@ class LaserPrinter:
         spaces = self.line_width - len(left) - len(right)
         return left + (" " * spaces) + right + "\n"
 
+    # ----------------- HEADER -----------------
+
     def _build_header(self, data):
-        header = []
-        currency = self.settings.get("currency", "Ar")
+        h = []
 
-        header.append(self.side_by_side(self.settings.get('company_name', ''), "CLIENT"))
-        header.append(self.side_by_side(self.settings.get('company_phone', ''), data.get('client_name', '(Non spécifié)')))
-        header.append(self.side_by_side(f"NIF: {self.settings.get('company_nif', '')}", data.get('client_phone', '')))
-
+        h.append(self.side_by_side(self.settings.get('company_name', ''), "CLIENT"))
+        h.append(self.side_by_side(self.settings.get('company_phone', ''), data.get('client_name', '')))
+        h.append(self.side_by_side(f"NIF: {self.settings.get('company_nif', '')}", data.get('client_phone', '')))
+        
         stat = self.settings.get('company_stat', '')
         if stat:
-            header.append(self.side_by_side(f"STAT: {stat}", ""))
+            h.append(self.side_by_side(f"STAT: {stat}", ""))
 
-        address = self.settings.get('company_address', '')
-        for line in address.split("\n"):
-            header.append(self.side_by_side(line, ""))
+        for line in self.settings.get('company_address', '').split("\n"):
+            h.append(self.side_by_side(line, ""))
 
-        header.append(self._print_separator('-'))
+        h.append(self._sep('-'))
 
-        # Numéro facture + Date
-        no_text = f"No: {data['receipt_number']}"
+        # Numéro et date
+        no = f"No: {data['receipt_number']}"
         try:
             d = datetime.strptime(data['date'], "%Y-%m-%d")
-            date_text = f"Date: {d.strftime('%d/%m/%Y')}"
+            date = f"Date: {d.strftime('%d/%m/%Y')}"
         except:
-            date_text = f"Date: {data['date']}"
+            date = f"Date: {data['date']}"
 
-        header.append(self.side_by_side(no_text, date_text))
-        header.append(self._print_separator())
-        header.append("Liste des articles".center(self.line_width) + "\n")
+        h.append(self.side_by_side(no, date))
 
-        return header
+        h.append(self._sep())
+        h.append("Liste des articles".center(self.line_width) + "\n")
+
+        return h
+
+    # ----------------- ITEMS -----------------
 
     def _build_items(self, data):
         currency = self.settings.get("currency", "Ar")
-        items_list = []
+        out = []
 
         for i, item in enumerate(data["items"], 1):
             name = item["name"]
-            if len(name) > 44:
-                name = name[:41] + "..."
+            if len(name) > self.line_width - 4:
+                name = name[:self.line_width - 7] + "..."
 
-            items_list.append(f"{i}. {name}\n")
-            items_list.append(f"   {item['quantity']} x {item['unit_price']:,.0f} {currency} = {item['total']:,.0f} {currency}\n")
+            out.append(f"{i}. {name}\n")
+            out.append(f"   {item['quantity']} x {item['unit_price']:,.0f} {currency} = {item['total']:,.0f} {currency}\n")
 
-        return items_list
+        return out
+
+    # ----------------- FOOTER -----------------
 
     def _build_footer(self, data):
         currency = self.settings.get("currency", "Ar")
-        footer = []
+        f = []
 
-        footer.append(self._print_separator())
-        footer.append("TOTAL A PAYER".center(self.line_width) + "\n")
-        footer.append(f"{data['total']:,.0f} {currency}".center(self.line_width) + "\n")
+        f.append(self._sep())
+        f.append("TOTAL A PAYER".center(self.line_width) + "\n")
+        f.append(f"{data['total']:,.0f} {currency}".center(self.line_width) + "\n")
 
-        payment = data.get("payment_method", "Espèces")
-        footer.append(f"Paiement: {payment}".center(self.line_width) + "\n")
+        f.append(f"Paiement: {data.get('payment_method', 'Espèces')}".center(self.line_width) + "\n")
 
-        footer.append(self._print_separator())
-        footer.append("Merci pour votre achat!".center(self.line_width) + "\n")
-        footer.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
-        footer.append("\n")
+        f.append(self._sep())
+        f.append("Merci pour votre achat!".center(self.line_width) + "\n")
+        f.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
 
-        return footer
+        return f
 
-    # --------------------------------------------------------
-    #   PAGINATION STRICTE
-    # --------------------------------------------------------
+    # ----------------- PAGINATION -----------------
 
     def _format_receipt_with_pagination(self, data):
 
@@ -127,96 +112,75 @@ class LaserPrinter:
         items = self._build_items(data)
         footer = self._build_footer(data)
 
+        total_lines = len(header) + len(items) + len(footer)
+
+        # --------- CAS 1 : 1 SEULE PAGE ---------
+        if total_lines <= self.max_lines_per_page:
+            return "".join(header + items + footer)
+
+        # --------- CAS 2 : MULTI-PAGE ---------
         pages = []
 
-        # ---------------------
-        # PAGE 1
-        # ---------------------
+        # Première page : Header + Items jusqu'à limite
         page1 = []
         page1.extend(header)
 
-        first_page_items = items[:8]  # MAX 8 ARTICLE SUR PAGE 1
-        page1.extend(first_page_items)
+        lines_left = self.max_lines_per_page - len(page1) - len(footer)
 
+        # Ajoute les items jusqu'à remplir la page
+        page1.extend(items[:lines_left])
         pages.append("".join(page1))
 
-        # ---------------------
-        # PAGES SUIVANTES
-        # ---------------------
-        remaining_items = items[8:]
-        current_page = []
+        # Items restants
+        remaining = items[lines_left:]
+        current = []
 
-        for line in remaining_items:
-            current_page.append(line)
+        for line in remaining:
+            current.append(line)
 
-            # Si la page est presque pleine, on la valide
-            if len(current_page) >= self.max_lines_per_page - len(footer) - 2:
-                pages.append("".join(current_page))
-                current_page = []
+            if len(current) >= self.max_lines_per_page - len(footer):
+                pages.append("".join(current))
+                current = []
 
-        # ---------------------
-        # FOOTER sur dernière page
-        # ---------------------
-        current_page.extend(footer)
-        pages.append("".join(current_page))
+        # Ajouter dernier bloc + footer
+        current.extend(footer)
+        pages.append("".join(current))
 
         return "\f".join(pages)
 
-    # --------------------------------------------------------
-    #   IMPRESSION
-    # --------------------------------------------------------
+    # ----------------- PRINT -----------------
 
     def print_receipt(self, data):
         try:
-            text_content = self._format_receipt_with_pagination(data)
+            content = self._format_receipt_with_pagination(data)
 
-            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt", encoding="utf-8") as tmp:
-                tmp.write(text_content)
-                tmp_path = tmp.name
+            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+                tmp.write(content)
+                path = tmp.name
 
             result = subprocess.run(
                 [
                     "lp",
                     "-d", self.printer_name,
                     "-o", f"media={self.paper_format}",
-                    "-o", "cpi=12",      # police plus grande
+                    "-o", "cpi=12",
                     "-o", "lpi=8",
-                    "-o", "page-left=10",
-                    "-o", "page-right=10",
-                    "-o", "page-top=10",
-                    "-o", "page-bottom=10",
-                    tmp_path
+                    "-o", "page-left=5",
+                    "-o", "page-right=5",
+                    "-o", "page-top=5",
+                    "-o", "page-bottom=5",
+                    path
                 ],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
 
-            os.unlink(tmp_path)
+            os.unlink(path)
 
             if result.returncode == 0:
-                return True, f"Reçu envoyé à l'imprimante {self.printer_name}"
-            return False, f"Erreur impression : {result.stderr}"
+                return True, "Impression OK"
+            return False, result.stderr
 
-        except FileNotFoundError:
-            return False, "Commande 'lp' introuvable"
-        except subprocess.TimeoutExpired:
-            return False, "Timeout : imprimante ne répond pas"
         except Exception as e:
-            import traceback
-            return False, f"Erreur: {e}\n{traceback.format_exc()}"
-
-    def test_print(self):
-        data = {
-            "receipt_number": "TEST-LASER-001",
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "client_name": "Client Test Laser",
-            "client_phone": "034 00 000 00",
-            "items": [
-                {"name": "Produit test 1", "quantity": 2, "unit_price": 5000, "total": 10000},
-                {"name": "Produit test 2", "quantity": 1, "unit_price": 15000, "total": 15000},
-            ],
-            "total": 25000,
-            "payment_method": "Espèces"
-        }
-        return self.print_receipt(data)
+            return False, str(e)
