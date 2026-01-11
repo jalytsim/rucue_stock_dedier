@@ -1,7 +1,7 @@
 """
 Module d'impression laser pour reçus
 Imprime sur imprimante HP LaserJet 1022n en format A6
-Utilise le même format que l'impression thermique
+Format identique au reçu thermique avec police monospace
 """
 
 import subprocess
@@ -16,7 +16,7 @@ class LaserPrinter:
         # Nom de l'imprimante (configurable dans les paramètres)
         self.printer_name = settings.get('laser_printer_name', 'HP_LaserJet_1022n')
         self.paper_format = settings.get('laser_paper_format', 'A6')
-        # Largeur de ligne pour A6 (48 caractères comme thermique)
+        # Largeur de ligne pour format texte monospace
         self.line_width = 48
     
     def check_connection(self):
@@ -43,7 +43,7 @@ class LaserPrinter:
     
     def side_by_side(self, left, right):
         """
-        Affiche deux textes sur la même ligne (48 chars pour A6)
+        Affiche deux textes sur la même ligne (48 chars)
         Même logique que thermal_printer
         """
         left = left.strip()
@@ -52,7 +52,6 @@ class LaserPrinter:
         total_len = len(left) + len(right)
 
         if total_len >= self.line_width:
-            # Tronquer uniquement ce qui dépasse
             excess = total_len - self.line_width + 1
             if len(right) > len(left):
                 right = right[:-excess]
@@ -66,38 +65,30 @@ class LaserPrinter:
         """Formater le reçu - IDENTIQUE au format thermique"""
         lines = []
         
-        # ============================
-        #    CLIENT & SOCIETE
-        # ============================
+        # CLIENT & SOCIETE
         lines.append(self.side_by_side("CLIENT", self.settings.get('company_name', '')))
         
-        # CLIENT NOM / TELEPHONE SOCIETE
         lines.append(self.side_by_side(
-            receipt_data.get('client_name', '(Non spécifié)'),
+            receipt_data.get('client_name', '(Non specifie)'),
             self.settings.get('company_phone', '')
         ))
         
-        # TEL CLIENT / NIF SOCIETE
         lines.append(self.side_by_side(
             receipt_data.get('client_phone', ''),
             f"NIF: {self.settings.get('company_nif', '')}" if self.settings.get('company_nif') else ""
         ))
         
-        # STAT
         stat = self.settings.get('company_stat', '')
         if stat:
             lines.append(self.side_by_side("", f"STAT: {stat}"))
         
-        # Adresse sur plusieurs lignes
         address = self.settings.get('company_address', '')
         for line in address.split("\n"):
             lines.append(self.side_by_side("", line))
         
         lines.append(self._print_separator('-'))
         
-        # ============================
-        #    NO FACTURE & DATE
-        # ============================
+        # NO FACTURE & DATE
         no_text = f"No: {receipt_data['receipt_number']}"
         try:
             d = datetime.strptime(receipt_data['date'], "%Y-%m-%d")
@@ -109,9 +100,7 @@ class LaserPrinter:
         
         lines.append(self._print_separator())
         
-        # ============================
-        #     LISTE DES ARTICLES
-        # ============================
+        # LISTE DES ARTICLES
         lines.append("Liste des articles".center(self.line_width) + "\n")
         
         currency = self.settings.get('currency', 'Ar')
@@ -129,20 +118,16 @@ class LaserPrinter:
             
             lines.append(f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}\n")
         
-        # ============================
-        #            TOTAL
-        # ============================
+        # TOTAL
         lines.append(self._print_separator())
         
         lines.append("TOTAL A PAYER".center(self.line_width) + "\n")
         lines.append(f"{receipt_data['total']:,.0f} {currency}".center(self.line_width) + "\n")
         
-        payment = receipt_data.get("payment_method", "Espèces")
+        payment = receipt_data.get("payment_method", "Especes")
         lines.append(f"Paiement: {payment}".center(self.line_width) + "\n")
         
-        # ============================
-        #       PIED DE PAGE
-        # ============================
+        # PIED DE PAGE
         lines.append(self._print_separator())
         lines.append("Merci pour votre achat!".center(self.line_width) + "\n")
         lines.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
@@ -152,9 +137,9 @@ class LaserPrinter:
         return "".join(lines)
     
     def print_receipt(self, receipt_data):
-        """Imprimer le reçu sur l'imprimante laser"""
+        """Imprimer le reçu sur l'imprimante laser avec police monospace"""
         try:
-            # Formater le contenu (identique au thermique)
+            # Formater le contenu
             text_content = self._format_receipt_text(receipt_data)
             
             # Créer un fichier temporaire
@@ -167,13 +152,18 @@ class LaserPrinter:
                 tmp.write(text_content)
                 tmp_path = tmp.name
             
-            # Imprimer avec lp
+            # IMPORTANT: Options pour police monospace et taille réduite
             result = subprocess.run(
                 [
                     "lp",
                     "-d", self.printer_name,
                     "-o", f"media={self.paper_format}",
-                    "-o", "fit-to-page",
+                    "-o", "cpi=17",  # 17 caractères par pouce = police plus petite
+                    "-o", "lpi=8",   # 8 lignes par pouce = espacement vertical réduit
+                    "-o", "page-left=10",  # Marge gauche 10pt
+                    "-o", "page-right=10", # Marge droite 10pt
+                    "-o", "page-top=10",   # Marge haut 10pt
+                    "-o", "page-bottom=10", # Marge bas 10pt
                     tmp_path
                 ],
                 capture_output=True,
