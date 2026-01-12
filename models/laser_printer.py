@@ -6,7 +6,7 @@ Version avec espacement réduit - Fournisseur à gauche, Client à droite
 
 from escpos.printer import Usb
 from datetime import datetime
-from name_formatter import format_client_name  # ton module NameFormatter
+from utils.name_formatter import format_client_name  # ton module NameFormatter
 
 
 class ThermalPrinter:
