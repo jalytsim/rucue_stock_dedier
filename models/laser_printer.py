@@ -35,8 +35,8 @@ class LaserPrinter:
         supplier_lines = [
             company.get('company_name', ''),
             company.get('company_phone', ''),
-            f"NIF: {company.get('company_nif', '')}",
-            f"STAT: {company.get('company_stat', '')}"
+            f"NIF:{company.get('company_nif', '')}",
+            f"STAT:{company.get('company_stat', '')}"
         ]
         supplier_lines.extend(company.get('company_address', '').split("\n"))
 
