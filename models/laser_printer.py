@@ -45,33 +45,48 @@ class LaserPrinter:
 
     def _build_header(self, data):
         h = []
+
         company = self.settings
 
-        # Gestion multi-ligne du contact client
+        # Récupération des infos client multi-lignes (max 3 lignes)
         client_contact_lines = data.get('client_contact', '').split("\n")
-        client_contact_first = client_contact_lines[0] if client_contact_lines else ""
-        client_contact_rest = client_contact_lines[1:]
+        client_contact_lines = [l.strip() for l in client_contact_lines if l.strip()]  # nettoyer les lignes vides
+        client_contact_lines = client_contact_lines[:3]  # max 3 lignes
 
-        h.append(self.side_by_side(company.get('company_name', ''), "DOIT"))
-        h.append(self.side_by_side(company.get('company_phone', ''), data.get('client_name', '')))
-        h.append(self.side_by_side(f"NIF: {company.get('company_nif', '')}", client_contact_first))
+        # Préparation des lignes fournisseur
+        supplier_lines = [
+            company.get('company_name', ''),
+            company.get('company_phone', ''),
+            f"NIF: {company.get('company_nif', '')}",
+            f"STAT: {company.get('company_stat', '')}"
+        ]
 
-        # Ajouter les lignes suivantes du client
-        for extra in client_contact_rest:
-            h.append(self.side_by_side("", extra))
+        # Ajout des lignes d'adresse du fournisseur
+        supplier_lines.extend(company.get('company_address', '').split("\n"))
 
-        # STAT
-        stat = company.get('company_stat', '')
-        if stat:
-            h.append(self.side_by_side(f"STAT: {stat}", ""))
+        # Construction des paires fournisseur/client
+        # ------------------------------------------------
+        # Ligne 0 : company_name + "DOIT"
+        h.append(self.side_by_side(supplier_lines[0], "DOIT"))
 
-        # Adresse fournisseur
-        for line in company.get('company_address', '').split("\n"):
-            h.append(self.side_by_side(line, ""))
+        # Ligne 1 : phone + nom client
+        h.append(self.side_by_side(supplier_lines[1], data.get('client_name', '')))
+
+        # Ligne 2 : NIF + 1ère ligne client (si existe)
+        h.append(self.side_by_side(supplier_lines[2], client_contact_lines[0] if len(client_contact_lines) > 0 else ""))
+
+        # Ligne 3 : STAT + 2ème ligne client
+        h.append(self.side_by_side(supplier_lines[3], client_contact_lines[1] if len(client_contact_lines) > 1 else ""))
+
+        # Ligne 4+ : adresses fournisseurs + 3ème ligne client si dispo
+        addr_index = 4
+        for i, addr_line in enumerate(supplier_lines[4:]):
+            right_text = client_contact_lines[2] if (i == 0 and len(client_contact_lines) == 3) else ""
+            h.append(self.side_by_side(addr_line, right_text))
 
         h.append(self._sep('-'))
 
-        # Date
+        # DATE
         try:
             d = datetime.strptime(data['date'], "%Y-%m-%d")
             date_text = f"Date: {d.strftime('%d/%m/%Y')}"
@@ -84,6 +99,7 @@ class LaserPrinter:
         h.append("Liste des articles".center(self.line_width) + "\n")
 
         return h
+
 
 
     # ----------------------------------------------------
