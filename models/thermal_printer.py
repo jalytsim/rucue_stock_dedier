@@ -1,7 +1,7 @@
 """
 Module d'impression thermique pour reçus
 Imprime directement sur l'imprimante XP-Q300 sans passer par PDF
-Version avec espacement réduit - Fournisseur à gauche, Client à droite
+Version avec espacement réduit - Fournisseur à gauche (Sans NIF/STAT), Client à droite
 """
 
 from escpos.printer import Usb
@@ -48,7 +48,7 @@ class ThermalPrinter:
         return left + (" " * spaces) + right + "\n"
 
     # -------------------------------
-    # Header aligné LaserPrinter
+    # Header sans NIF et STAT
     # -------------------------------
     def _print_header(self, receipt_data):
         company = self.settings
@@ -56,37 +56,39 @@ class ThermalPrinter:
         # Récupération des lignes client
         client_lines = receipt_data.get('client_contact', '').split("\n")
         client_lines = [l.strip() for l in client_lines if l.strip()]
-        client_lines = client_lines[:3]  # max 3 lignes
+        client_lines = client_lines[:4]  # Un peu plus de place pour le client
 
-        # Lignes fournisseur
+        # Lignes fournisseur (NIF et STAT supprimés)
         supplier_lines = [
             company.get('company_name', ''),
-            company.get('company_phone', ''),
-            f"NIF: {company.get('company_nif', '')}" if company.get('company_nif') else "",
-            f"STAT: {company.get('company_stat', '')}" if company.get('company_stat') else ""
+            company.get('company_phone', '')
         ]
+        # On ajoute les lignes d'adresse fournisseur
         supplier_lines.extend(company.get('company_address', '').split("\n"))
 
-        # Construction des lignes
-        # Ligne 0: company_name | DOIT
+        # Ligne 0: company_name | DOIT (en gras)
         self.printer.set(bold=True)
         self.printer.text(self.side_by_side(supplier_lines[0], "DOIT"))
         self.printer.set(bold=False)
 
-        # Ligne 1: phone | nom client
-        self.printer.text(self.side_by_side(supplier_lines[1], receipt_data.get('client_name', '(Non spécifié)')))
+        # Ligne 1: téléphone | nom client
+        self.printer.text(self.side_by_side(
+            supplier_lines[1] if len(supplier_lines) > 1 else "", 
+            receipt_data.get('client_name', '(Non spécifié)')
+        ))
 
-        # Ligne 2: NIF | client ligne 1
-        self.printer.text(self.side_by_side(supplier_lines[2], client_lines[0] if len(client_lines) > 0 else ""))
-
-        # Ligne 3: STAT | client ligne 2
-        self.printer.text(self.side_by_side(supplier_lines[3], client_lines[1] if len(client_lines) > 1 else ""))
-
-        # Ligne 4+: adresse fournisseur | client ligne 3 (si existante)
-        addr_lines = supplier_lines[4:]
-        for i, addr_line in enumerate(addr_lines):
-            right = client_lines[2] if i == 0 and len(client_lines) == 3 else ""
-            self.printer.text(self.side_by_side(addr_line, right))
+        # Lignes suivantes : Adresse fournisseur | Adresse client
+        # On boucle pour aligner le reste des informations
+        max_lines = max(len(supplier_lines) - 2, len(client_lines))
+        
+        for i in range(max_lines):
+            # Index pour supplier commence à 2 (après nom et tel)
+            left = supplier_lines[i + 2] if (i + 2) < len(supplier_lines) else ""
+            # Index pour client commence à 0
+            right = client_lines[i] if i < len(client_lines) else ""
+            
+            if left or right:
+                self.printer.text(self.side_by_side(left, right))
 
         self._print_separator('-')
 
@@ -161,9 +163,6 @@ class ThermalPrinter:
             import traceback
             return False, traceback.format_exc()
 
-    # -------------------------------
-    # Test print
-    # -------------------------------
     def test_print(self):
         data = {
             "receipt_number": "TEST-00001",
@@ -173,16 +172,12 @@ class ThermalPrinter:
             "items": [
                 {"name": "Produit de test 1", "quantity": 2, "unit_price": 5000, "total": 10000},
                 {"name": "Produit de test 2", "quantity": 1, "unit_price": 15000, "total": 15000},
-                {"name": "Article nom très long pour test", "quantity": 3, "unit_price": 2500, "total": 7500},
             ],
-            "total": 32500,
+            "total": 25000,
             "payment_method": "Espèces"
         }
         return self.print_receipt(data)
 
-    # -------------------------------
-    # Check connection
-    # -------------------------------
     def check_connection(self):
         ok, msg = self.connect()
         if ok:
