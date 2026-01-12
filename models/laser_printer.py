@@ -47,8 +47,8 @@ class LaserPrinter:
         supplier_lines = [
             company.get('company_name', ''),
             company.get('company_phone', ''),
-            f"NIF:{company.get('company_nif', '')}",
-            f"STAT:{company.get('company_stat', '')}"
+            f"NIF: {company.get('company_nif', '')}",
+            f"STAT: {company.get('company_stat', '')}"
         ]
         supplier_lines.extend(company.get('company_address', '').split("\n"))
 
@@ -74,33 +74,19 @@ class LaserPrinter:
         return h
 
     # ----------------------------
-    # ITEMS (Tableau avec Espacement)
+    # TABLE ROWS GENERATOR
     # ----------------------------
-    def _build_items_table_lines(self, items_list):
-        """ Crée les lignes du tableau avec un saut de ligne entre articles """
-        table_lines = []
-        # En-tête : Desc (18), Qté (4), P.U (8), Montant (8)
-        header_row = f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Montant':>8}\n"
-        table_lines.append(header_row)
-        table_lines.append("-" * self.line_width + "\n")
-
-        for item in items_list:
-            name = item["name"][:17] 
-            qty = str(item['quantity'])
-            price = f"{item['unit_price']:,.0f}"
-            total = f"{item['total']:,.0f}"
-            
-            # Ligne de l'article
-            table_lines.append(f"{name:<18} {qty:>4} {price:>8} {total:>8}\n")
-            # AJOUT D'UN ESPACE entre chaque article
-            table_lines.append("\n") 
-        
-        return table_lines
+    def _get_item_row(self, item):
+        name = item["name"][:17] 
+        qty = str(item['quantity'])
+        price = f"{item['unit_price']:,.0f}"
+        total = f"{item['total']:,.0f}"
+        return f"{name:<18} {qty:>4} {price:>8} {total:>8}\n"
 
     # ----------------------------
     # FOOTER
     # ----------------------------
-    def _build_footer(self, data, page_num=1, total_pages=1):
+    def _build_footer(self, data, page_num, total_pages):
         currency = self.settings.get("currency", "Ar")
         f = []
         f.append(self._sep())
@@ -114,53 +100,65 @@ class LaserPrinter:
         return f
 
     # ----------------------------
-    # PAGINATION
+    # PAGINATION LOGIC
     # ----------------------------
     def _format_receipt_with_pagination(self, data):
+        items = data["items"]
         header = self._build_header(data)
-        item_lines = self._build_items_table_lines(data["items"])
         
-        # On calcule le nombre de lignes du footer complet
-        temp_footer = self._build_footer(data, 1, 1)
-        footer_len = len(temp_footer)
-        
-        # Zone disponible pour les articles (marge de sécurité de 2 lignes)
-        available_lines = self.max_lines_per_page - len(header) - 2
-        
-        # Découpage par pages
-        pages_items = []
-        current_chunk = []
-        for line in item_lines:
-            current_chunk.append(line)
-            if len(current_chunk) >= available_lines:
-                pages_items.append(current_chunk)
-                current_chunk = []
-        if current_chunk:
-            pages_items.append(current_chunk)
-            
-        total_pages = len(pages_items)
+        # 1. Découpage des items (Page 1 max 15 items, puis ~18 par page suite car pas de header)
+        pages_items_list = []
+        if len(items) > 15:
+            pages_items_list.append(items[:15])
+            remaining = items[15:]
+            # Pour les pages suivantes, on peut mettre plus d'items car le header n'est pas répété
+            # (ou vous pouvez choisir de répéter le header, ici on ne le répète pas pour gagner de la place)
+            chunk_size = 18 
+            for i in range(0, len(remaining), chunk_size):
+                pages_items_list.append(remaining[i:i + chunk_size])
+        else:
+            pages_items_list.append(items)
+
+        total_pages = len(pages_items_list) + 1 # +1 pour la page du footer
         formatted_pages = []
-        
-        for i, page_content in enumerate(pages_items):
+
+        # 2. Construction des pages d'articles
+        for i, page_items in enumerate(pages_items_list):
             curr_num = i + 1
             page_output = []
-            page_output.extend(header)
-            page_output.extend(page_content)
             
-            if curr_num == total_pages:
-                # Page finale : On pousse le footer vers le bas
-                padding = self.max_lines_per_page - len(page_output) - footer_len
-                if padding > 0:
-                    page_output.extend(["\n"] * padding)
-                page_output.extend(self._build_footer(data, curr_num, total_pages))
-            else:
-                # Page intermédiaire : Juste le numéro de page en bas
-                padding = self.max_lines_per_page - len(page_output) - 1
-                if padding > 0:
-                    page_output.extend(["\n"] * padding)
-                page_output.append(f"Page: {curr_num}/{total_pages}".rjust(self.line_width) + "\n")
+            # On ne met le header que sur la première page
+            if curr_num == 1:
+                page_output.extend(header)
+            
+            # En-tête du tableau
+            page_output.append(f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Montant':>8}\n")
+            page_output.append("-" * self.line_width + "\n")
+            
+            # Contenu des articles
+            for item in page_items:
+                page_output.append(self._get_item_row(item))
+                page_output.append("\n") # Espacement entre lignes
+            
+            # Bas de page : Numérotation uniquement
+            padding = self.max_lines_per_page - len(page_output) - 1
+            if padding > 0:
+                page_output.extend(["\n"] * padding)
+            page_output.append(f"Page: {curr_num}/{total_pages}".rjust(self.line_width) + "\n")
             
             formatted_pages.append("".join(page_output))
+
+        # 3. Construction de la page finale (FOOTER SEUL)
+        footer_page = []
+        footer_content = self._build_footer(data, total_pages, total_pages)
+        
+        # Pousser le footer tout en bas de la page 43
+        padding_footer = self.max_lines_per_page - len(footer_content)
+        if padding_footer > 0:
+            footer_page.extend(["\n"] * padding_footer)
+        
+        footer_page.extend(footer_content)
+        formatted_pages.append("".join(footer_page))
 
         return "\f".join(formatted_pages)
 
