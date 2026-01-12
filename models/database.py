@@ -1,5 +1,6 @@
 """
 Base de données - Gestion des produits, reçus et paramètres
+Version avec support contact (téléphone ou adresse) et formatage noms
 """
 import sqlite3
 import json
@@ -34,14 +35,14 @@ class Database:
             )
         ''')
         
-        # Table des reçus
+        # Table des reçus - MISE À JOUR
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS receipts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 receipt_number TEXT UNIQUE NOT NULL,
                 date TEXT NOT NULL,
                 client_name TEXT,
-                client_phone TEXT,
+                client_contact TEXT,
                 items TEXT NOT NULL,
                 total REAL NOT NULL,
                 payment_method TEXT DEFAULT 'Espèces',
@@ -49,6 +50,39 @@ class Database:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Vérifier si la colonne client_phone existe et la renommer en client_contact
+        cursor.execute("PRAGMA table_info(receipts)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'client_phone' in columns and 'client_contact' not in columns:
+            # Créer nouvelle table avec la nouvelle structure
+            cursor.execute('''
+                CREATE TABLE receipts_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_number TEXT UNIQUE NOT NULL,
+                    date TEXT NOT NULL,
+                    client_name TEXT,
+                    client_contact TEXT,
+                    items TEXT NOT NULL,
+                    total REAL NOT NULL,
+                    payment_method TEXT DEFAULT 'Espèces',
+                    notes TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Copier les données
+            cursor.execute('''
+                INSERT INTO receipts_new 
+                SELECT id, receipt_number, date, client_name, client_phone, 
+                       items, total, payment_method, notes, created_at
+                FROM receipts
+            ''')
+            
+            # Supprimer l'ancienne table et renommer
+            cursor.execute('DROP TABLE receipts')
+            cursor.execute('ALTER TABLE receipts_new RENAME TO receipts')
         
         # Table des paramètres
         cursor.execute('''
@@ -61,7 +95,7 @@ class Database:
         # Initialiser les paramètres par défaut
         default_settings = {
             'company_name': 'MAGASIN Ly',
-            'company_address': 'PAV No: 28 TSENEA \nMIARINARIVO 117',
+            'company_address': 'PAV No: 28 TSENEA\nMIARINARIVO 117',
             'company_phone': '033 01 830 14',
             'company_email': 'contact@magasinly.mg',
             'company_nif': '3000262366',
@@ -71,13 +105,11 @@ class Database:
             'company_cif': '0189577 DGI-M du 03/06/2025',
             'receipt_counter': '1',
             'currency': 'Ar',
-            'paper_width': '58',  # mm
+            'paper_width': '58',
             'receipt_type': 'Grossiste - Détaillants/ Vente à l\'utilisateur',
-            
-            # NOUVEAUX PARAMÈTRES POUR L'IMPRIMANTE LASER
-            'laser_printer_name': 'HP_LaserJet_1022n',  # Nom de l'imprimante laser
-            'laser_paper_format': 'A6',  # Format papier (A6, A5, A4, etc.)
-            'laser_enabled': 'true',  # Activer l'impression laser
+            'laser_printer_name': 'HP_LaserJet_1022n',
+            'laser_paper_format': 'A6',
+            'laser_enabled': 'true',
         }
         
         for key, value in default_settings.items():
@@ -95,12 +127,10 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Vérifier si le produit existe
         cursor.execute('SELECT id, count, total_sold FROM products WHERE name = ?', (name,))
         result = cursor.fetchone()
         
         if result:
-            # Mise à jour
             product_id, count, total_sold = result
             cursor.execute('''
                 UPDATE products 
@@ -108,7 +138,6 @@ class Database:
                 WHERE id = ?
             ''', (unit_price, count + 1, total_sold + unit_price, datetime.now().isoformat(), product_id))
         else:
-            # Insertion
             cursor.execute('''
                 INSERT INTO products (name, unit_price, count, total_sold, last_used)
                 VALUES (?, ?, 1, ?, ?)
@@ -164,13 +193,13 @@ class Database:
         
         cursor.execute('''
             INSERT INTO receipts 
-            (receipt_number, date, client_name, client_phone, items, total, payment_method, notes)
+            (receipt_number, date, client_name, client_contact, items, total, payment_method, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             receipt_data['receipt_number'],
             receipt_data['date'],
             receipt_data.get('client_name', ''),
-            receipt_data.get('client_phone', ''),
+            receipt_data.get('client_contact', ''),
             items_json,
             receipt_data['total'],
             receipt_data.get('payment_method', 'Espèces'),
@@ -180,7 +209,6 @@ class Database:
         conn.commit()
         conn.close()
         
-        # Incrémenter le compteur
         self.increment_receipt_counter()
     
     def get_all_receipts(self):
@@ -201,7 +229,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT receipt_number, date, client_name, client_phone, items, total, payment_method, notes
+            SELECT receipt_number, date, client_name, client_contact, items, total, payment_method, notes
             FROM receipts
             WHERE id = ?
         ''', (receipt_id,))
@@ -213,7 +241,7 @@ class Database:
                 'receipt_number': result[0],
                 'date': result[1],
                 'client_name': result[2],
-                'client_phone': result[3],
+                'client_contact': result[3],
                 'items': json.loads(result[4]),
                 'total': result[5],
                 'payment_method': result[6],
@@ -290,18 +318,14 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Total des ventes
         cursor.execute('SELECT SUM(total) FROM receipts')
         total_sales = cursor.fetchone()[0] or 0
         
-        # Nombre de reçus
         cursor.execute('SELECT COUNT(*) FROM receipts')
         total_receipts = cursor.fetchone()[0] or 0
         
-        # Vente moyenne
         avg_sale = total_sales / total_receipts if total_receipts > 0 else 0
         
-        # Nombre de produits uniques
         cursor.execute('SELECT COUNT(*) FROM products')
         unique_products = cursor.fetchone()[0] or 0
         

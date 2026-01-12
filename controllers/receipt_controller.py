@@ -1,9 +1,11 @@
 """
 Contrôleur principal de l'application
+Version avec formatage intelligent des noms et support adresse
 """
 from datetime import datetime
 import os
 from pathlib import Path
+from utils.name_formatter import format_client_name
 
 class ReceiptController:
     def __init__(self, database, pdf_generator):
@@ -51,22 +53,28 @@ class ReceiptController:
         """Vider les articles actuels"""
         self.current_items = []
     
-    def save_and_generate_receipt(self, client_name='', client_phone='', payment_method='Espèces', notes=''):
-        """Sauvegarder et générer le reçu PDF"""
-        if not self.current_items:
-            return False, "Aucun article à facturer"
+    def _prepare_receipt_data(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
+        """Préparer les données du reçu avec formatage du nom"""
+        # Formater le nom du client
+        formatted_name = format_client_name(client_name) if client_name else ''
         
-        # Préparer les données du reçu
-        receipt_data = {
+        return {
             'receipt_number': self.db.get_next_receipt_number(),
             'date': datetime.now().strftime('%Y-%m-%d'),
-            'client_name': client_name,
-            'client_phone': client_phone,
+            'client_name': formatted_name,
+            'client_contact': client_contact,  # Peut être téléphone ou adresse
             'items': self.current_items.copy(),
             'total': self.get_current_total(),
             'payment_method': payment_method,
             'notes': notes
         }
+    
+    def save_and_generate_receipt(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
+        """Sauvegarder et générer le reçu PDF"""
+        if not self.current_items:
+            return False, "Aucun article à facturer"
+        
+        receipt_data = self._prepare_receipt_data(client_name, client_contact, payment_method, notes)
         
         # Sauvegarder dans la base de données
         try:
@@ -95,22 +103,12 @@ class ReceiptController:
         except Exception as e:
             return False, f"Erreur de génération PDF: {str(e)}"
     
-    def print_thermal_receipt(self, client_name='', client_phone='', payment_method='Espèces', notes=''):
+    def print_thermal_receipt(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
         """Imprimer directement sur l'imprimante thermique et sauvegarder dans l'historique"""
         if not self.current_items:
             return False, "Aucun article à imprimer"
         
-        # Préparer les données du reçu
-        receipt_data = {
-            'receipt_number': self.db.get_next_receipt_number(),
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'client_name': client_name,
-            'client_phone': client_phone,
-            'items': self.current_items.copy(),
-            'total': self.get_current_total(),
-            'payment_method': payment_method,
-            'notes': notes
-        }
+        receipt_data = self._prepare_receipt_data(client_name, client_contact, payment_method, notes)
         
         # Sauvegarder dans la base de données AVANT l'impression
         try:
@@ -127,20 +125,51 @@ class ReceiptController:
             success, message = printer.print_receipt(receipt_data)
             
             if success:
-                # Vider les articles actuels seulement si impression réussie
                 self.clear_current_items()
                 return True, f"Reçu {receipt_data['receipt_number']} imprimé et sauvegardé"
             else:
-                # L'impression a échoué mais le reçu est sauvegardé dans l'historique
                 self.clear_current_items()
                 return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression:\n{message}"
         
         except Exception as e:
             import traceback
             error_detail = traceback.format_exc()
-            # Le reçu est déjà sauvegardé dans l'historique
             self.clear_current_items()
             return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression:\n{str(e)}\n\nDétails:\n{error_detail}"
+    
+    def print_laser_receipt(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
+        """Imprimer directement sur l'imprimante laser et sauvegarder dans l'historique"""
+        if not self.current_items:
+            return False, "Aucun article à imprimer"
+        
+        receipt_data = self._prepare_receipt_data(client_name, client_contact, payment_method, notes)
+        
+        # Sauvegarder dans la base de données AVANT l'impression
+        try:
+            self.db.save_receipt(receipt_data)
+        except Exception as e:
+            return False, f"Erreur de sauvegarde: {str(e)}"
+        
+        # Imprimer sur l'imprimante laser
+        try:
+            from models.laser_printer import LaserPrinter
+            settings = self.db.get_all_settings()
+            printer = LaserPrinter(settings)
+            
+            success, message = printer.print_receipt(receipt_data)
+            
+            if success:
+                self.clear_current_items()
+                return True, f"Reçu {receipt_data['receipt_number']} imprimé (laser) et sauvegardé"
+            else:
+                self.clear_current_items()
+                return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{message}"
+        
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            self.clear_current_items()
+            return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{str(e)}\n\nDétails:\n{error_detail}"
     
     def test_thermal_printer(self):
         """Tester la connexion à l'imprimante thermique"""
@@ -148,6 +177,16 @@ class ReceiptController:
             from models.thermal_printer import ThermalPrinter
             settings = self.db.get_all_settings()
             printer = ThermalPrinter(settings)
+            return printer.check_connection()
+        except Exception as e:
+            return False, f"Erreur: {str(e)}"
+
+    def test_laser_printer(self):
+        """Tester la connexion à l'imprimante laser"""
+        try:
+            from models.laser_printer import LaserPrinter
+            settings = self.db.get_all_settings()
+            printer = LaserPrinter(settings)
             return printer.check_connection()
         except Exception as e:
             return False, f"Erreur: {str(e)}"
@@ -229,63 +268,6 @@ class ReceiptController:
             import traceback
             error_detail = traceback.format_exc()
             return False, f"Erreur de réimpression:\n{str(e)}\n\nDétails:\n{error_detail}"
-        
-    def print_laser_receipt(self, client_name='', client_phone='', payment_method='Espèces', notes=''):
-        """Imprimer directement sur l'imprimante laser et sauvegarder dans l'historique"""
-        if not self.current_items:
-            return False, "Aucun article à imprimer"
-        
-        # Préparer les données du reçu
-        receipt_data = {
-            'receipt_number': self.db.get_next_receipt_number(),
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'client_name': client_name,
-            'client_phone': client_phone,
-            'items': self.current_items.copy(),
-            'total': self.get_current_total(),
-            'payment_method': payment_method,
-            'notes': notes
-        }
-        
-        # Sauvegarder dans la base de données AVANT l'impression
-        try:
-            self.db.save_receipt(receipt_data)
-        except Exception as e:
-            return False, f"Erreur de sauvegarde: {str(e)}"
-        
-        # Imprimer sur l'imprimante laser
-        try:
-            from models.laser_printer import LaserPrinter
-            settings = self.db.get_all_settings()
-            printer = LaserPrinter(settings)
-            
-            success, message = printer.print_receipt(receipt_data)
-            
-            if success:
-                # Vider les articles actuels seulement si impression réussie
-                self.clear_current_items()
-                return True, f"Reçu {receipt_data['receipt_number']} imprimé (laser) et sauvegardé"
-            else:
-                # L'impression a échoué mais le reçu est sauvegardé dans l'historique
-                self.clear_current_items()
-                return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{message}"
-        
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            # Le reçu est déjà sauvegardé dans l'historique
-            self.clear_current_items()
-            return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{str(e)}\n\nDétails:\n{error_detail}"
-
-    def test_laser_printer(self):
-        """Tester la connexion à l'imprimante laser"""
-        try:
-            from models.laser_printer import LaserPrinter
-            settings = self.db.get_all_settings()
-            printer = LaserPrinter(settings)
-            return printer.check_connection()
-        except Exception as e:
-            return False, f"Erreur: {str(e)}"
 
     def reprint_laser_receipt(self, receipt_id):
         """Réimprimer un reçu existant sur l'imprimante laser"""
