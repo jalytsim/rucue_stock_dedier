@@ -10,7 +10,8 @@ class LaserPrinter:
         self.printer_name = settings.get('laser_printer_name', 'HP_LaserJet_1022n')
         self.paper_format = settings.get('laser_paper_format', 'Custom.105x148mm')
         self.line_width = 40 
-        self.max_lines_per_page = 43
+        # On réduit à 40 pour éviter que la dernière ligne ne force une page blanche
+        self.max_lines_per_page = 40
 
     def _sep(self, char='='):
         return char * self.line_width + "\n"
@@ -75,14 +76,14 @@ class LaserPrinter:
         f.append(self._sep())
         f.append("Merci pour votre achat!".center(self.line_width) + "\n")
         f.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
-        f.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width) + "\n")
+        f.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width)) # Pas de \n final ici
         return f
 
     def _format_receipt_with_pagination(self, data):
         items = data["items"]
         header = self._build_header(data)
         
-        # Découpage des items (Page 1 max 15, puis 18 par page)
+        # Découpage : Page 1 (max 15 items), Pages suivantes (max 18 items)
         pages_items_list = []
         if len(items) > 15:
             pages_items_list.append(items[:15])
@@ -110,9 +111,10 @@ class LaserPrinter:
                 page_output.append("\n")
             
             # Padding pour numéro de page en bas
+            # On retire 1 ligne car la dernière ligne n'a pas de \n dans le footer
             padding = self.max_lines_per_page - len(page_output) - 1
             if padding > 0: page_output.extend(["\n"] * padding)
-            page_output.append(f"Page: {curr_num}/{total_pages}".rjust(self.line_width) + "\n")
+            page_output.append(f"Page: {curr_num}/{total_pages}".rjust(self.line_width))
             formatted_pages.append("".join(page_output))
 
         # Page finale (Footer seul)
@@ -123,14 +125,13 @@ class LaserPrinter:
         footer_page.extend(footer_content)
         formatted_pages.append("".join(footer_page))
 
-        # IMPORTANT: Utilisation de .join pour ne pas avoir de \f à la toute fin
         return "\f".join(formatted_pages)
 
     def print_receipt(self, data):
         try:
             content = self._format_receipt_with_pagination(data)
-            # On s'assure qu'il n'y a pas d'espace blanc ou de saut de ligne inutile à la fin du fichier
-            content = content.rstrip() 
+            # Suppression radicale des espaces de fin
+            content = content.strip() 
             
             with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
                 tmp.write(content)
@@ -138,8 +139,10 @@ class LaserPrinter:
 
             result = subprocess.run(
                 ["lp", "-d", self.printer_name, "-o", f"media={self.paper_format}",
-                 "-o", "cpi=12", "-o", "lpi=8", "-o", "page-left=5", "-o", "page-right=5",
-                 "-o", "page-top=5", "-o", "page-bottom=5", path],
+                 "-o", "cpi=12", "-o", "lpi=8", 
+                 "-o", "page-left=5", "-o", "page-right=5",
+                 "-o", "page-top=5", "-o", "page-bottom=5", 
+                 "-o", "fit-to-page", path], # Ajout de fit-to-page pour sécurité
                 capture_output=True, text=True, timeout=10
             )
             os.unlink(path)
