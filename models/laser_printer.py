@@ -44,7 +44,7 @@ class LaserPrinter:
 
         h.append(self.side_by_side(self.settings.get('company_name', ''), "DOIT"))
         h.append(self.side_by_side(self.settings.get('company_phone', ''), data.get('client_name', '')))
-        h.append(self.side_by_side(f"NIF: {self.settings.get('company_nif', '')}", data.get('client_phone', '')))
+        h.append(self.side_by_side(f"NIF: {self.settings.get('company_nif', '')}", data.get('client_contact', '')))
         
         stat = self.settings.get('company_stat', '')
         if stat:

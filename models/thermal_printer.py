@@ -73,7 +73,7 @@ class ThermalPrinter:
             # LIGNE 3: NIF SOCIETE | TEL CLIENT
             self.printer.text(self.side_by_side(
                 f"NIF: {self.settings.get('company_nif', '')}" if self.settings.get('company_nif') else "",
-                receipt_data.get('client_phone', '')
+                receipt_data.get('client_contact', '')
             ))
 
             # LIGNE 4: STAT | (vide)
@@ -164,7 +164,7 @@ class ThermalPrinter:
             "receipt_number": "TEST-00001",
             "date": datetime.now().strftime("%Y-%m-%d"),
             "client_name": "Client Test",
-            "client_phone": "034 00 000 00",
+            "client_contact": "034 00 000 00",
             "items": [
                 {"name": "Produit de test 1", "quantity": 2, "unit_price": 5000, "total": 10000},
                 {"name": "Produit de test 2", "quantity": 1, "unit_price": 15000, "total": 15000},
