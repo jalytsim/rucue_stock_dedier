@@ -45,19 +45,27 @@ class LaserPrinter:
 
     def _build_header(self, data):
         h = []
-
         company = self.settings
-        client_contact = data.get('client_contact', '').split("\n")[0]  # FIX ICI
+
+        # Gestion multi-ligne du contact client
+        client_contact_lines = data.get('client_contact', '').split("\n")
+        client_contact_first = client_contact_lines[0] if client_contact_lines else ""
+        client_contact_rest = client_contact_lines[1:]
 
         h.append(self.side_by_side(company.get('company_name', ''), "DOIT"))
         h.append(self.side_by_side(company.get('company_phone', ''), data.get('client_name', '')))
-        h.append(self.side_by_side(f"NIF: {company.get('company_nif', '')}", client_contact))
+        h.append(self.side_by_side(f"NIF: {company.get('company_nif', '')}", client_contact_first))
 
+        # Ajouter les lignes suivantes du client
+        for extra in client_contact_rest:
+            h.append(self.side_by_side("", extra))
+
+        # STAT
         stat = company.get('company_stat', '')
         if stat:
             h.append(self.side_by_side(f"STAT: {stat}", ""))
 
-        # Adresse sur plusieurs lignes
+        # Adresse fournisseur
         for line in company.get('company_address', '').split("\n"):
             h.append(self.side_by_side(line, ""))
 
@@ -76,6 +84,7 @@ class LaserPrinter:
         h.append("Liste des articles".center(self.line_width) + "\n")
 
         return h
+
 
     # ----------------------------------------------------
     # ITEMS
