@@ -47,8 +47,8 @@ class LaserPrinter:
         supplier_lines = [
             company.get('company_name', ''),
             company.get('company_phone', ''),
-            f"NIF: {company.get('company_nif', '')}",
-            f"STAT: {company.get('company_stat', '')}"
+            f"NIF:{company.get('company_nif', '')}",
+            f"STAT:{company.get('company_stat', '')}"
         ]
         supplier_lines.extend(company.get('company_address', '').split("\n"))
 
@@ -74,27 +74,28 @@ class LaserPrinter:
         return h
 
     # ----------------------------
-    # ITEMS (Transformé en Tableau)
+    # ITEMS (Tableau avec Espacement)
     # ----------------------------
-    def _build_items_table(self, items_list):
-        """ Crée le tableau des articles avec colonnes alignées """
-        lines = []
-        # En-tête du tableau : Description (18), Qté (4), P.U (8), Montant (10)
-        header_table = f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Montant':>8}\n"
-        lines.append(header_table)
-        lines.append("-" * self.line_width + "\n")
+    def _build_items_table_lines(self, items_list):
+        """ Crée les lignes du tableau avec un saut de ligne entre articles """
+        table_lines = []
+        # En-tête : Desc (18), Qté (4), P.U (8), Montant (8)
+        header_row = f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Montant':>8}\n"
+        table_lines.append(header_row)
+        table_lines.append("-" * self.line_width + "\n")
 
         for item in items_list:
-            name = item["name"][:17] # Tronquer pour tenir dans la colonne
+            name = item["name"][:17] 
             qty = str(item['quantity'])
             price = f"{item['unit_price']:,.0f}"
             total = f"{item['total']:,.0f}"
             
-            # Formatage de la ligne
-            line = f"{name:<18} {qty:>4} {price:>8} {total:>8}\n"
-            lines.append(line)
+            # Ligne de l'article
+            table_lines.append(f"{name:<18} {qty:>4} {price:>8} {total:>8}\n")
+            # AJOUT D'UN ESPACE entre chaque article
+            table_lines.append("\n") 
         
-        return lines
+        return table_lines
 
     # ----------------------------
     # FOOTER
@@ -109,50 +110,55 @@ class LaserPrinter:
         f.append(self._sep())
         f.append("Merci pour votre achat!".center(self.line_width) + "\n")
         f.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
-        # Ajout du numéro de page
         f.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width) + "\n")
         return f
 
     # ----------------------------
-    # PAGINATION (Footer à la fin uniquement)
+    # PAGINATION
     # ----------------------------
     def _format_receipt_with_pagination(self, data):
         header = self._build_header(data)
-        item_lines = self._build_items_table(data["items"])
+        item_lines = self._build_items_table_lines(data["items"])
         
-        # Calcul de l'espace pour le footer
-        # On crée un footer temporaire pour compter ses lignes
+        # On calcule le nombre de lignes du footer complet
         temp_footer = self._build_footer(data, 1, 1)
         footer_len = len(temp_footer)
         
-        # Lignes disponibles pour les articles par page
-        lines_per_page = self.max_lines_per_page - len(header) - 2 # -2 pour marge sécurité
+        # Zone disponible pour les articles (marge de sécurité de 2 lignes)
+        available_lines = self.max_lines_per_page - len(header) - 2
         
-        # Découpage des items en pages
-        pages_items = [item_lines[i:i + lines_per_page] for i in range(0, len(item_lines), lines_per_page)]
+        # Découpage par pages
+        pages_items = []
+        current_chunk = []
+        for line in item_lines:
+            current_chunk.append(line)
+            if len(current_chunk) >= available_lines:
+                pages_items.append(current_chunk)
+                current_chunk = []
+        if current_chunk:
+            pages_items.append(current_chunk)
+            
         total_pages = len(pages_items)
-        
         formatted_pages = []
         
         for i, page_content in enumerate(pages_items):
-            current_page_num = i + 1
+            curr_num = i + 1
             page_output = []
             page_output.extend(header)
             page_output.extend(page_content)
             
-            # Si c'est la DERNIÈRE page, on ajoute le footer complet
-            if current_page_num == total_pages:
-                # Ajouter des lignes vides pour pousser le footer en bas
+            if curr_num == total_pages:
+                # Page finale : On pousse le footer vers le bas
                 padding = self.max_lines_per_page - len(page_output) - footer_len
                 if padding > 0:
                     page_output.extend(["\n"] * padding)
-                page_output.extend(self._build_footer(data, current_page_num, total_pages))
+                page_output.extend(self._build_footer(data, curr_num, total_pages))
             else:
-                # Si ce n'est pas la dernière page, on met juste le numéro de page en bas
+                # Page intermédiaire : Juste le numéro de page en bas
                 padding = self.max_lines_per_page - len(page_output) - 1
                 if padding > 0:
                     page_output.extend(["\n"] * padding)
-                page_output.append(f"Page: {current_page_num}/{total_pages}".rjust(self.line_width) + "\n")
+                page_output.append(f"Page: {curr_num}/{total_pages}".rjust(self.line_width) + "\n")
             
             formatted_pages.append("".join(page_output))
 
@@ -170,20 +176,14 @@ class LaserPrinter:
 
             result = subprocess.run(
                 [
-                    "lp",
-                    "-d", self.printer_name,
+                    "lp", "-d", self.printer_name,
                     "-o", f"media={self.paper_format}",
-                    "-o", "cpi=12",
-                    "-o", "lpi=8",
-                    "-o", "page-left=5",
-                    "-o", "page-right=5",
-                    "-o", "page-top=5",
-                    "-o", "page-bottom=5",
+                    "-o", "cpi=12", "-o", "lpi=8",
+                    "-o", "page-left=5", "-o", "page-right=5",
+                    "-o", "page-top=5", "-o", "page-bottom=5",
                     path
                 ],
-                capture_output=True,
-                text=True,
-                timeout=10
+                capture_output=True, text=True, timeout=10
             )
             os.unlink(path)
             if result.returncode == 0:
