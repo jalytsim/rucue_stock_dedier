@@ -13,10 +13,13 @@ class ThermalPrinter:
         self.settings = settings
         self.printer = None
 
-        # Force votre XP-Q300 en 80 mm = 48 caractères
+        # Papier 80 mm = 48 caractères
         self.paper_width = int(settings.get('paper_width', '80'))
         self.line_width = 48
 
+    # -------------------------------
+    # Connexion
+    # -------------------------------
     def connect(self):
         try:
             self.printer = Usb(0x1fc9, 0x2016, in_ep=0x81, out_ep=0x02)
@@ -24,13 +27,16 @@ class ThermalPrinter:
         except Exception as e:
             return False, f"Erreur de connexion: {str(e)}"
 
+    # -------------------------------
+    # Helpers
+    # -------------------------------
     def _print_separator(self, char='='):
         self.printer.text(char * self.line_width + "\n")
 
     def side_by_side(self, left, right):
         """
-        Affiche deux textes sur la même ligne (80mm = 48 chars).
-        LEFT = FOURNISSEUR, RIGHT = CLIENT
+        Affiche deux textes sur la même ligne.
+        LEFT = fournisseur, RIGHT = client
         """
         left = left.strip()
         right = right.strip()
@@ -38,7 +44,6 @@ class ThermalPrinter:
         total_len = len(left) + len(right)
 
         if total_len >= self.line_width:
-            # tronquer uniquement ce qui dépasse
             excess = total_len - self.line_width + 1
             if len(right) > len(left):
                 right = right[:-excess]
@@ -48,6 +53,66 @@ class ThermalPrinter:
         spaces = self.line_width - len(left) - len(right)
         return left + (" " * spaces) + right + "\n"
 
+    # -------------------------------
+    # HEADER (comme LaserPrinter)
+    # -------------------------------
+    def _build_header(self, receipt_data):
+        """
+        Retourne le texte du header prêt à imprimer,
+        fournisseur à gauche, client à droite, max 3 lignes client.
+        """
+        lines = []
+        company = self.settings
+
+        # Gestion multi-lignes du client
+        client_lines = receipt_data.get('client_contact', '').split("\n")
+        client_lines = [l.strip() for l in client_lines if l.strip()]
+        client_lines = client_lines[:3]  # max 3 lignes
+
+        # Lignes fournisseur
+        supplier_lines = [
+            company.get('company_name', ''),
+            company.get('company_phone', ''),
+            f"NIF: {company.get('company_nif', '')}" if company.get('company_nif') else "",
+            f"STAT: {company.get('company_stat', '')}" if company.get('company_stat') else ""
+        ]
+        # Adresse fournisseur
+        supplier_lines.extend(company.get('company_address', '').split("\n"))
+
+        # Ligne 0: nom société | DOIT
+        lines.append(self.side_by_side(supplier_lines[0], "DOIT"))
+        # Ligne 1: téléphone | nom client
+        lines.append(self.side_by_side(supplier_lines[1], receipt_data.get('client_name', '(Non spécifié)')))
+        # Ligne 2: NIF | client ligne 1
+        lines.append(self.side_by_side(supplier_lines[2], client_lines[0] if len(client_lines) > 0 else ""))
+        # Ligne 3: STAT | client ligne 2
+        lines.append(self.side_by_side(supplier_lines[3], client_lines[1] if len(client_lines) > 1 else ""))
+
+        # Lignes adresse fournisseur + client ligne 3 (uniquement sur la première ligne d'adresse)
+        addr_lines = supplier_lines[4:]
+        for i, addr_line in enumerate(addr_lines):
+            right = client_lines[2] if i == 0 and len(client_lines) == 3 else ""
+            lines.append(self.side_by_side(addr_line, right))
+
+        # Séparateur
+        lines.append(self._print_separator('-'))
+
+        # No facture & date
+        no_text = f"No: {receipt_data.get('receipt_number', '')}"
+        try:
+            d = datetime.strptime(receipt_data['date'], "%Y-%m-%d")
+            date_text = f"Date: {d.strftime('%d/%m/%Y')}"
+        except:
+            date_text = f"Date: {receipt_data.get('date', '')}"
+
+        lines.append(self.side_by_side(no_text, date_text))
+        lines.append(self._print_separator())
+
+        return "".join(lines)
+
+    # -------------------------------
+    # PRINT RECEIPT
+    # -------------------------------
     def print_receipt(self, receipt_data):
         try:
             if not self.printer:
@@ -55,59 +120,17 @@ class ThermalPrinter:
                 if not ok:
                     return False, msg
 
+            # -------------------------------
+            # HEADER
+            # -------------------------------
             self.printer.set(align='left', bold=True)
-
-            # ============================
-            #    FOURNISSEUR & CLIENT (inversé)
-            # ============================
-            # LIGNE 1: NOM SOCIETE | CLIENT
-            self.printer.text(self.side_by_side(self.settings.get('company_name', ''), "DOIT"))
+            header_text = self._build_header(receipt_data)
+            self.printer.text(header_text)
             self.printer.set(bold=False)
 
-            # LIGNE 2: TELEPHONE SOCIETE | NOM CLIENT
-            self.printer.text(self.side_by_side(
-                self.settings.get('company_phone', ''),
-                receipt_data.get('client_name', '(Non specifie)')
-            ))
-
-            # LIGNE 3: NIF SOCIETE | TEL CLIENT
-            self.printer.text(self.side_by_side(
-                f"NIF: {self.settings.get('company_nif', '')}" if self.settings.get('company_nif') else "",
-                receipt_data.get('client_contact', '')
-            ))
-
-            # LIGNE 4: STAT | (vide)
-            stat = self.settings.get('company_stat', '')
-            if stat:
-                self.printer.text(self.side_by_side(f"STAT: {stat}", ""))
-
-            # LIGNES SUIVANTES: ADRESSE | (vide)
-            address = self.settings.get('company_address', '')
-            for line in address.split("\n"):
-                self.printer.text(self.side_by_side(line, ""))
-
-            self._print_separator('-')
-
-            # ============================
-            #    NO FACTURE & DATE
-            # ============================
-            self.printer.set(bold=True)
-
-            no_text = f"No: {receipt_data['receipt_number']}"
-            try:
-                d = datetime.strptime(receipt_data['date'], "%Y-%m-%d")
-                date_text = f"Date: {d.strftime('%d/%m/%Y')}"
-            except:
-                date_text = f"Date: {receipt_data['date']}"
-
-            self.printer.text(self.side_by_side(no_text, date_text))
-            self.printer.set(bold=False)
-
-            self._print_separator()
-
-            # ============================
-            #     LISTE DES ARTICLES
-            # ============================
+            # -------------------------------
+            # LISTE DES ARTICLES
+            # -------------------------------
             self.printer.set(align='center', bold=True)
             self.printer.text("Liste des articles\n")
             self.printer.set(align='left', bold=False)
@@ -129,11 +152,10 @@ class ThermalPrinter:
 
                 self.printer.text(f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}\n")
 
-            # ============================
-            #            TOTAL
-            # ============================
+            # -------------------------------
+            # TOTAL
+            # -------------------------------
             self._print_separator()
-
             self.printer.set(align='center', bold=True)
             self.printer.text("TOTAL A PAYER\n")
             self.printer.set(width=2, height=2)
@@ -143,9 +165,9 @@ class ThermalPrinter:
             payment = receipt_data.get("payment_method", "Espèces")
             self.printer.text(f"Paiement: {payment}\n")
 
-            # ============================
-            #       PIED DE PAGE
-            # ============================
+            # -------------------------------
+            # PIED DE PAGE
+            # -------------------------------
             self._print_separator()
             self.printer.text("Merci pour votre achat!\n")
             self.printer.text("Mankasitraka Tompoko!\n")
@@ -159,22 +181,28 @@ class ThermalPrinter:
             import traceback
             return False, traceback.format_exc()
 
+    # -------------------------------
+    # TEST PRINT
+    # -------------------------------
     def test_print(self):
         data = {
             "receipt_number": "TEST-00001",
             "date": datetime.now().strftime("%Y-%m-%d"),
             "client_name": "Client Test",
-            "client_contact": "034 00 000 00",
+            "client_contact": "034 00 000 00\nQuartier Ambodonakanga\nAntananarivo",
             "items": [
                 {"name": "Produit de test 1", "quantity": 2, "unit_price": 5000, "total": 10000},
                 {"name": "Produit de test 2", "quantity": 1, "unit_price": 15000, "total": 15000},
-                {"name": "Article nom très long pour test", "quantity": 3, "unit_price": 2500, "total": 7500},
+                {"name": "Article très long pour test", "quantity": 3, "unit_price": 2500, "total": 7500},
             ],
             "total": 32500,
             "payment_method": "Espèces"
         }
         return self.print_receipt(data)
 
+    # -------------------------------
+    # CHECK CONNECTION
+    # -------------------------------
     def check_connection(self):
         ok, msg = self.connect()
         if ok:
