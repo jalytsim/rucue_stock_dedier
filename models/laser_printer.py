@@ -1,189 +1,190 @@
-"""
-Module d'impression thermique pour reçus
-Imprime directement sur l'imprimante XP-Q300 sans passer par PDF
-Version avec espacement réduit - Fournisseur à gauche, Client à droite
-"""
-
-from escpos.printer import Usb
+import subprocess
+import tempfile
 from datetime import datetime
-from utils.name_formatter import format_client_name  # ton module NameFormatter
+import os
+from utils.name_formatter import format_client_name  # Chemin vers ton NameFormatter
 
-
-class ThermalPrinter:
+class LaserPrinter:
     def __init__(self, settings):
         self.settings = settings
-        self.printer = None
+        self.printer_name = settings.get('laser_printer_name', 'HP_LaserJet_1022n')
+        self.paper_format = settings.get('laser_paper_format', 'Custom.105x148mm')
+        self.line_width = 40       # largeur réelle imprimable en colonnes
+        self.max_lines_per_page = 43  # hauteur réelle utilisable
 
-        # Force XP-Q300 en 80 mm = 48 caractères
-        self.paper_width = int(settings.get('paper_width', '80'))
-        self.line_width = 48
+    # ----------------------------
+    # HELPERS
+    # ----------------------------
+    def _sep(self, char='='):
+        return char * self.line_width + "\n"
 
-    # -------------------------------
-    # Connexion
-    # -------------------------------
-    def connect(self):
-        try:
-            self.printer = Usb(0x1fc9, 0x2016, in_ep=0x81, out_ep=0x02)
-            return True, "Imprimante connectée"
-        except Exception as e:
-            return False, f"Erreur de connexion: {str(e)}"
-
-    # -------------------------------
-    # Ligne séparatrice
-    # -------------------------------
-    def _print_separator(self, char='='):
-        self.printer.text(char * self.line_width + "\n")
-
-    # -------------------------------
-    # Texte côte à côte
-    # -------------------------------
     def side_by_side(self, left, right):
+        """ Affiche deux textes alignés gauche + droite sur une seule ligne """
         left = left.strip()
         right = right.strip()
         total_len = len(left) + len(right)
-
         if total_len >= self.line_width:
             excess = total_len - self.line_width + 1
             if len(right) > len(left):
                 right = right[:-excess]
             else:
                 left = left[:-excess]
-
         spaces = self.line_width - len(left) - len(right)
         return left + (" " * spaces) + right + "\n"
 
-    # -------------------------------
-    # Header
-    # -------------------------------
-    def _print_header(self, receipt_data):
+    # ----------------------------
+    # HEADER
+    # ----------------------------
+    def _build_header(self, data):
+        h = []
         company = self.settings
 
-        # Formatage client
-        client_name = format_client_name(receipt_data.get('client_name', '(Non spécifié)'))
+        # Nom du client formaté
+        client_name_raw = data.get('client_name', '')
+        client_name = format_client_name(client_name_raw)
 
-        # Découper si Nom + Prénom > 20 caractères
-        parts = client_name.split()
-        if len(parts) >= 2 and len(parts[0] + " " + parts[1]) > 20:
-            parts[1] = parts[1][:20 - len(parts[0])]
-            client_name = " ".join(parts)
-
-        # Récupération des lignes client (max 3)
-        client_lines = receipt_data.get('client_contact', '').split("\n")
-        client_lines = [l.strip() for l in client_lines if l.strip()][:3]
+        # Gestion multi-lignes du contact / adresse client (max 3 lignes)
+        client_lines = data.get('client_contact', '').split("\n")
+        client_lines = [l.strip() for l in client_lines if l.strip()]
+        client_lines = client_lines[:3]
 
         # Lignes fournisseur
         supplier_lines = [
             company.get('company_name', ''),
             company.get('company_phone', ''),
-            f"NIF: {company.get('company_nif', '')}" if company.get('company_nif') else "",
-            f"STAT: {company.get('company_stat', '')}" if company.get('company_stat') else ""
+            f"NIF: {company.get('company_nif', '')}",
+            f"STAT: {company.get('company_stat', '')}"
         ]
         supplier_lines.extend(company.get('company_address', '').split("\n"))
 
-        # Construction des lignes
-        self.printer.set(bold=True)
-        self.printer.text(self.side_by_side(supplier_lines[0], "DOIT"))
-        self.printer.set(bold=False)
+        # Construction des lignes avec side_by_side
+        h.append(self.side_by_side(supplier_lines[0], "DOIT"))
+        h.append(self.side_by_side(supplier_lines[1], client_name))
+        h.append(self.side_by_side(supplier_lines[2], client_lines[0] if len(client_lines) > 0 else ""))
+        h.append(self.side_by_side(supplier_lines[3], client_lines[1] if len(client_lines) > 1 else ""))
 
-        self.printer.text(self.side_by_side(supplier_lines[1], client_name))
-        self.printer.text(self.side_by_side(supplier_lines[2], client_lines[0] if len(client_lines) > 0 else ""))
-        self.printer.text(self.side_by_side(supplier_lines[3], client_lines[1] if len(client_lines) > 1 else ""))
-
+        # Adresse fournisseur + 3ème ligne client si dispo
         for i, addr_line in enumerate(supplier_lines[4:]):
-            right = client_lines[2] if i == 0 and len(client_lines) == 3 else ""
-            self.printer.text(self.side_by_side(addr_line, right))
+            right_text = client_lines[2] if (i == 0 and len(client_lines) == 3) else ""
+            h.append(self.side_by_side(addr_line, right_text))
 
-        self._print_separator('-')
+        h.append(self._sep('-'))
 
-        # No facture & date
-        no_text = f"No: {receipt_data.get('receipt_number', '')}"
+        # Date
         try:
-            d = datetime.strptime(receipt_data['date'], "%Y-%m-%d")
+            d = datetime.strptime(data['date'], "%Y-%m-%d")
             date_text = f"Date: {d.strftime('%d/%m/%Y')}"
         except:
-            date_text = f"Date: {receipt_data.get('date', '')}"
+            date_text = f"Date: {data['date']}"
+        h.append(self.side_by_side("", date_text))
 
-        self.printer.set(bold=True)
-        self.printer.text(self.side_by_side(no_text, date_text))
-        self.printer.set(bold=False)
-        self._print_separator()
+        h.append(self._sep())
+        h.append("Liste des articles".center(self.line_width) + "\n")
+        return h
 
-    # -------------------------------
-    # Impression reçu
-    # -------------------------------
-    def print_receipt(self, receipt_data):
+    # ----------------------------
+    # ITEMS
+    # ----------------------------
+    def _build_items(self, data):
+        currency = self.settings.get("currency", "Ar")
+        out = []
+        for i, item in enumerate(data["items"], 1):
+            name = item["name"]
+            max_len = self.line_width - 4
+            if len(name) > max_len:
+                name = name[:max_len - 3] + "..."
+            out.append(f"{i}. {name}\n")
+            out.append(f"   {item['quantity']} x {item['unit_price']:,.0f} {currency} = {item['total']:,.0f} {currency}\n")
+        return out
+
+    # ----------------------------
+    # FOOTER
+    # ----------------------------
+    def _build_footer(self, data):
+        currency = self.settings.get("currency", "Ar")
+        f = []
+        f.append(self._sep())
+        f.append("TOTAL A PAYER".center(self.line_width) + "\n")
+        f.append(f"{data['total']:,.0f} {currency}".center(self.line_width) + "\n")
+        f.append(f"Paiement: {data.get('payment_method', 'Espèces')}".center(self.line_width) + "\n")
+        f.append(self._sep())
+        f.append("Merci pour votre achat!".center(self.line_width) + "\n")
+        f.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
+        return f
+
+    # ----------------------------
+    # PAGINATION
+    # ----------------------------
+    def _format_receipt_with_pagination(self, data):
+        header = self._build_header(data)
+        items = self._build_items(data)
+        footer = self._build_footer(data)
+        footer_lines = len(footer)
+        total_lines = len(header) + len(items) + footer_lines
+
+        if total_lines <= self.max_lines_per_page:
+            lines = header + items
+            footer_count = sum(f.count("\n") for f in footer)
+            while len(lines) + footer_count < self.max_lines_per_page:
+                lines.append("\n")
+            lines.extend(footer)
+            return "".join(lines)
+
+        pages = []
+        # Page 1
+        page1 = header.copy()
+        max_items_page1 = self.max_lines_per_page - len(header) - footer_lines
+        page1_items = items[:max_items_page1]
+        page1.extend(page1_items)
+        padding = self.max_lines_per_page - len(page1) - footer_lines
+        page1.extend(["\n"] * padding)
+        page1.extend(footer)
+        pages.append("".join(page1))
+
+        # Pages suivantes
+        remaining = items[max_items_page1:]
+        temp = []
+        for line in remaining:
+            temp.append(line)
+            if len(temp) == self.max_lines_per_page:
+                pages.append("".join(temp))
+                temp = []
+        if temp:
+            temp.extend(footer)
+            pages.append("".join(temp))
+
+        return "\f".join(pages)
+
+    # ----------------------------
+    # PRINT
+    # ----------------------------
+    def print_receipt(self, data):
         try:
-            if not self.printer:
-                ok, msg = self.connect()
-                if not ok:
-                    return False, msg
+            content = self._format_receipt_with_pagination(data)
+            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+                tmp.write(content)
+                path = tmp.name
 
-            # Header
-            self._print_header(receipt_data)
-
-            # Liste des articles
-            self.printer.set(align='center', bold=True)
-            self.printer.text("Liste des articles\n")
-            self.printer.set(align='left', bold=False)
-
-            currency = self.settings.get('currency', 'Ar')
-            for i, item in enumerate(receipt_data['items'], 1):
-                name = item["name"]
-                if len(name) > 44:
-                    name = name[:41] + "..."
-                self.printer.set(bold=True)
-                self.printer.text(f"{i}. {name}\n")
-                self.printer.set(bold=False)
-                self.printer.text(f"   {item['quantity']:.0f} x {item['unit_price']:,.0f} {currency} = {item['total']:,.0f} {currency}\n")
-
-            # Total
-            self._print_separator()
-            self.printer.set(align='center', bold=True)
-            self.printer.text("TOTAL A PAYER\n")
-            self.printer.set(width=2, height=2)
-            self.printer.text(f"{receipt_data['total']:,.0f} {currency}\n")
-            self.printer.set(width=1, height=1, bold=False)
-
-            payment = receipt_data.get("payment_method", "Espèces")
-            self.printer.text(f"Paiement: {payment}\n")
-
-            # Pied de page
-            self._print_separator()
-            self.printer.text("Merci pour votre achat!\n")
-            self.printer.text("Mankasitraka Tompoko!\n")
-            self.printer.text("\n\n")
-            self.printer.cut()
-
-            return True, "Reçu imprimé avec succès"
-
-        except Exception:
-            import traceback
-            return False, traceback.format_exc()
-
-    # -------------------------------
-    # Test print
-    # -------------------------------
-    def test_print(self):
-        data = {
-            "receipt_number": "TEST-00001",
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "client_name": "Rabearisoa Marie Monique",
-            "client_contact": "034 00 000 00\nQuartier Ambodonakanga\nAntananarivo",
-            "items": [
-                {"name": "Produit de test 1", "quantity": 2, "unit_price": 5000, "total": 10000},
-                {"name": "Produit de test 2", "quantity": 1, "unit_price": 15000, "total": 15000},
-                {"name": "Article nom très long pour test", "quantity": 3, "unit_price": 2500, "total": 7500},
-            ],
-            "total": 32500,
-            "payment_method": "Espèces"
-        }
-        return self.print_receipt(data)
-
-    # -------------------------------
-    # Vérifier connexion
-    # -------------------------------
-    def check_connection(self):
-        ok, msg = self.connect()
-        if ok:
-            self.printer = None
-        return ok, msg
+            result = subprocess.run(
+                [
+                    "lp",
+                    "-d", self.printer_name,
+                    "-o", f"media={self.paper_format}",
+                    "-o", "cpi=12",
+                    "-o", "lpi=8",
+                    "-o", "page-left=5",
+                    "-o", "page-right=5",
+                    "-o", "page-top=5",
+                    "-o", "page-bottom=5",
+                    path
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            os.unlink(path)
+            if result.returncode == 0:
+                return True, "Impression OK"
+            return False, result.stderr
+        except Exception as e:
+            return False, str(e)
