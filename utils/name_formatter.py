@@ -30,40 +30,51 @@ class NameFormatter:
                 return True
         
         return False
-    
+        
     @staticmethod
-    def format_person_name(name):
+    def format_person_name(name, max_total_length=20):
         """
         Formater un nom de personne
         Format: NOM Prénom1 P2.
-        
+        Si Nom+Prénom dépasse max_total_length, tronque le prénom pour que le total ≤ max_total_length
+
         Exemples:
         - "Rabearisoa Marie Monique" → "RABEARISOA Marie M."
-        - "rakoto jean paul" → "RAKOTO Jean P."
-        - "ANDRIA Michel" → "ANDRIA Michel"
+        - "Rakoto Jean Paul" → "RAKOTO Jean P."
         """
         if not name or not name.strip():
             return name
-        
+
         parts = name.strip().split()
-        
         if len(parts) == 0:
             return name
-        
+
         # Premier mot = NOM (en majuscule)
-        formatted_parts = [parts[0].upper()]
-        
-        if len(parts) >= 2:
-            # Deuxième mot = Prénom (capitalize)
-            formatted_parts.append(parts[1].capitalize())
-        
+        nom = parts[0].upper()
+        formatted_parts = [nom]
+
+        # Déterminer le prénom
+        prenom = parts[1].capitalize() if len(parts) >= 2 else ""
+
+        # Tronquer le prénom si Nom+Prénom dépasse max_total_length
+        if prenom:
+            total_len = len(nom) + 1 + len(prenom)  # +1 pour l'espace
+            if total_len > max_total_length:
+                allowed_prenom_len = max_total_length - len(nom) - 1
+                if allowed_prenom_len > 0:
+                    prenom = prenom[:allowed_prenom_len]
+                else:
+                    prenom = ""
+            formatted_parts.append(prenom)
+
+        # Troisième mot et suivants = Initiales
         if len(parts) >= 3:
-            # Troisième mot et suivants = Initiales
             for i in range(2, len(parts)):
                 initial = parts[i][0].upper() + '.'
                 formatted_parts.append(initial)
-        
+
         return ' '.join(formatted_parts)
+
     
     @staticmethod
     def format_organization_name(name):
