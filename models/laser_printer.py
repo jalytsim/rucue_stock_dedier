@@ -73,10 +73,20 @@ class LaserPrinter:
         f.append("TOTAL A PAYER".center(self.line_width) + "\n")
         f.append(f"{data['total']:,.0f} {currency}".center(self.line_width) + "\n")
         f.append(f"Paiement: {data.get('payment_method', 'Espèces')}".center(self.line_width) + "\n")
+        
+        # --- Zone de Signature ajoutée ici ---
+        f.append("\n") # Espace avant la signature
+        signature_label = "La gérance"
+        f.append(signature_label.rjust(self.line_width) + "\n")
+        # Ligne de pointillés pour la signature (environ 15 caractères)
+        f.append("................".rjust(self.line_width) + "\n")
+        f.append("\n") # Espace après la signature
+        # -------------------------------------
+
         f.append(self._sep())
         f.append("Merci pour votre achat!".center(self.line_width) + "\n")
         f.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
-        f.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width)) # Pas de \n final ici
+        f.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width)) 
         return f
 
     def _format_receipt_with_pagination(self, data):
