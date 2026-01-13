@@ -10,8 +10,90 @@ class LaserPrinter:
         self.printer_name = settings.get('laser_printer_name', 'HP_LaserJet_1022n')
         self.paper_format = settings.get('laser_paper_format', 'Custom.105x148mm')
         self.line_width = 40 
-        # On réduit à 40 pour éviter que la dernière ligne ne force une page blanche
         self.max_lines_per_page = 40
+
+    def _number_to_french(self, n):
+        """Convertit un nombre en lettres françaises"""
+        if n == 0:
+            return "zéro"
+        
+        units = ["", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"]
+        teens = ["dix", "onze", "douze", "treize", "quatorze", "quinze", "seize", 
+                 "dix-sept", "dix-huit", "dix-neuf"]
+        tens = ["", "", "vingt", "trente", "quarante", "cinquante", "soixante", 
+                "soixante", "quatre-vingt", "quatre-vingt"]
+        
+        def convert_below_100(n):
+            if n < 10:
+                return units[n]
+            elif n < 20:
+                return teens[n - 10]
+            elif n < 70:
+                unit = n % 10
+                ten = n // 10
+                if unit == 0:
+                    return tens[ten]
+                elif unit == 1 and ten != 8:
+                    return tens[ten] + " et un"
+                else:
+                    return tens[ten] + "-" + units[unit]
+            elif n < 80:
+                return "soixante-" + teens[n - 70]
+            elif n < 100:
+                unit = n % 10
+                if n == 80:
+                    return "quatre-vingts"
+                elif unit == 0:
+                    return "quatre-vingt-" + units[unit] if unit else "quatre-vingts"
+                else:
+                    return "quatre-vingt-" + units[unit]
+        
+        def convert_below_1000(n):
+            if n < 100:
+                return convert_below_100(n)
+            else:
+                hundred = n // 100
+                rest = n % 100
+                if hundred == 1:
+                    result = "cent"
+                else:
+                    result = units[hundred] + " cent"
+                if rest == 0:
+                    if hundred > 1:
+                        result += "s"
+                else:
+                    result += " " + convert_below_100(rest)
+                return result
+        
+        if n < 1000:
+            return convert_below_1000(n)
+        elif n < 1000000:
+            thousand = n // 1000
+            rest = n % 1000
+            if thousand == 1:
+                result = "mille"
+            else:
+                result = convert_below_1000(thousand) + " mille"
+            if rest > 0:
+                result += " " + convert_below_1000(rest)
+            return result
+        elif n < 1000000000:
+            million = n // 1000000
+            rest = n % 1000000
+            if million == 1:
+                result = "un million"
+            else:
+                result = convert_below_1000(million) + " millions"
+            if rest > 0:
+                if rest < 1000:
+                    result += " " + convert_below_1000(rest)
+                else:
+                    result += " " + convert_below_1000(rest // 1000) + " mille"
+                    if rest % 1000 > 0:
+                        result += " " + convert_below_1000(rest % 1000)
+            return result
+        else:
+            return "nombre trop grand"
 
     def _sep(self, char='='):
         return char * self.line_width + "\n"
@@ -66,82 +148,129 @@ class LaserPrinter:
         total = f"{item['total']:,.0f}"
         return f"{name:<18} {qty:>4} {price:>8} {total:>8}\n"
 
-    def _build_footer(self, data, page_num, total_pages):
+    def _build_footer(self, data):
+        """Construit le footer avec le montant en lettres"""
         currency = self.settings.get("currency", "Ar")
+        total_amount = int(data['total'])
+        amount_in_words = self._number_to_french(total_amount).capitalize()
+        
         f = []
         f.append(self._sep())
-        f.append("TOTAL A PAYER".center(self.line_width) + "\n")
-        f.append(f"{data['total']:,.0f} {currency}".center(self.line_width) + "\n")
-        f.append(f"Paiement: {data.get('payment_method', 'Espèces')}".center(self.line_width) + "\n")
+        f.append("TOTAL A PAYER".center(self.line_width) + " ")
+        f.append(f"{total_amount:,.0f} {currency}".center(self.line_width) + "\n")
         
-        # --- Zone de Signature ajoutée ici ---
-        f.append("\n") # Espace avant la signature
-        signature_label = "La gérance"
-        f.append(signature_label.rjust(self.line_width) + "\n")
-        # Ligne de pointillés pour la signature (environ 15 caractères)
+        # Montant en lettres (peut prendre plusieurs lignes si long)
+        # On découpe intelligemment si le texte est trop long
+        words_line = f"({amount_in_words} {currency.lower()})"
+        if len(words_line) <= self.line_width:
+            f.append(words_line.center(self.line_width) + "\n")
+        else:
+            # Découpe en plusieurs lignes si nécessaire
+            words = words_line.split()
+            current_line = ""
+            for word in words:
+                if len(current_line) + len(word) + 1 <= self.line_width:
+                    current_line += word + " "
+                else:
+                    f.append(current_line.strip().center(self.line_width) + "\n")
+                    current_line = word + " "
+            if current_line:
+                f.append(current_line.strip().center(self.line_width) + "\n")
+        
+        f.append("\n")
+        f.append("La gérance".rjust(self.line_width) + "\n")
         f.append("................".rjust(self.line_width) + "\n")
-        f.append("\n") # Espace après la signature
-        # -------------------------------------
-
+        f.append("\n")
         f.append(self._sep())
         f.append("Merci pour votre achat!".center(self.line_width) + "\n")
         f.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
-        f.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width)) 
         return f
 
     def _format_receipt_with_pagination(self, data):
         items = data["items"]
         header = self._build_header(data)
+        footer = self._build_footer(data)
         
-        # Découpage : Page 1 (max 15 items), Pages suivantes (max 18 items)
+        # Taille du header et footer en lignes
+        header_size = len(header)
+        footer_size = len(footer) + 1  # +1 pour le numéro de page
+        
+        # En-tête des colonnes (2 lignes)
+        column_header = [
+            f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Montant':>8}\n",
+            "-" * self.line_width + "\n"
+        ]
+        column_header_size = len(column_header)
+        
+        # Chaque item = 2 lignes (ligne produit + ligne vide)
+        lines_per_item = 2
+        
+        # Calcul de l'espace disponible pour la première page
+        first_page_available = self.max_lines_per_page - header_size - column_header_size - footer_size
+        first_page_items = first_page_available // lines_per_item
+        
+        # Calcul pour les pages suivantes
+        other_page_available = self.max_lines_per_page - column_header_size - footer_size
+        other_page_items = other_page_available // lines_per_item
+        
+        # Découpage intelligent des items
         pages_items_list = []
-        if len(items) > 15:
-            pages_items_list.append(items[:15])
-            remaining = items[15:]
-            chunk_size = 18 
-            for i in range(0, len(remaining), chunk_size):
-                pages_items_list.append(remaining[i:i + chunk_size])
-        else:
+        
+        if len(items) <= first_page_items:
+            # Tout tient sur une page
             pages_items_list.append(items)
-
-        total_pages = len(pages_items_list) + 1
+        else:
+            # Première page
+            pages_items_list.append(items[:first_page_items])
+            remaining = items[first_page_items:]
+            
+            # Pages suivantes
+            while remaining:
+                pages_items_list.append(remaining[:other_page_items])
+                remaining = remaining[other_page_items:]
+        
+        total_pages = len(pages_items_list)
         formatted_pages = []
-
-        # Construction des pages d'articles
-        for i, page_items in enumerate(pages_items_list):
-            curr_num = i + 1
+        
+        # Construction des pages
+        for page_num, page_items in enumerate(pages_items_list, 1):
             page_output = []
-            if curr_num == 1: page_output.extend(header)
             
-            page_output.append(f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Montant':>8}\n")
-            page_output.append("-" * self.line_width + "\n")
+            # Header uniquement sur la première page
+            if page_num == 1:
+                page_output.extend(header)
             
+            # En-tête des colonnes
+            page_output.extend(column_header)
+            
+            # Items de la page
             for item in page_items:
                 page_output.append(self._get_item_row(item))
                 page_output.append("\n")
             
-            # Padding pour numéro de page en bas
-            # On retire 1 ligne car la dernière ligne n'a pas de \n dans le footer
-            padding = self.max_lines_per_page - len(page_output) - 1
-            if padding > 0: page_output.extend(["\n"] * padding)
-            page_output.append(f"Page: {curr_num}/{total_pages}".rjust(self.line_width))
+            # Footer
+            page_output.extend(footer)
+            
+            # Numéro de page
+            page_number_line = f"Page: {page_num}/{total_pages}".rjust(self.line_width)
+            
+            # Padding pour remplir la page
+            current_lines = len(page_output)
+            padding_needed = self.max_lines_per_page - current_lines - 1  # -1 pour la ligne de numéro
+            
+            if padding_needed > 0:
+                page_output.extend(["\n"] * padding_needed)
+            
+            page_output.append(page_number_line)
+            
             formatted_pages.append("".join(page_output))
-
-        # Page finale (Footer seul)
-        footer_page = []
-        footer_content = self._build_footer(data, total_pages, total_pages)
-        padding_footer = self.max_lines_per_page - len(footer_content)
-        if padding_footer > 0: footer_page.extend(["\n"] * padding_footer)
-        footer_page.extend(footer_content)
-        formatted_pages.append("".join(footer_page))
-
+        
         return "\f".join(formatted_pages)
 
     def print_receipt(self, data):
         try:
             content = self._format_receipt_with_pagination(data)
-            # Suppression radicale des espaces de fin
-            content = content.strip() 
+            content = content.strip()
             
             with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
                 tmp.write(content)
@@ -152,7 +281,7 @@ class LaserPrinter:
                  "-o", "cpi=12", "-o", "lpi=8", 
                  "-o", "page-left=5", "-o", "page-right=5",
                  "-o", "page-top=5", "-o", "page-bottom=5", 
-                 "-o", "fit-to-page", path], # Ajout de fit-to-page pour sécurité
+                 "-o", "fit-to-page", path],
                 capture_output=True, text=True, timeout=10
             )
             os.unlink(path)

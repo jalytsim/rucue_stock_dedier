@@ -67,9 +67,10 @@ class ThermalPrinter:
         supplier_lines.extend(company.get('company_address', '').split("\n"))
 
         # Ligne 0: company_name | DOIT (en gras)
-        self.printer.set(bold=True)
+        self.printer.set(align='left', width=1, height=1)
+        self.printer.set(bold=True, underline=0)  # Correction ici
         self.printer.text(self.side_by_side(supplier_lines[0], "DOIT"))
-        self.printer.set(bold=False)
+        self.printer.set(bold=False)  # Correction ici
 
         # Ligne 1: téléphone | nom client
         self.printer.text(self.side_by_side(
@@ -100,9 +101,9 @@ class ThermalPrinter:
         except:
             date_text = f"Date: {receipt_data.get('date', '')}"
 
-        self.printer.set(bold=True)
+        self.printer.set(bold=True, underline=0)  # Correction ici
         self.printer.text(self.side_by_side(no_text, date_text))
-        self.printer.set(bold=False)
+        self.printer.set(bold=False)  # Correction ici
         self._print_separator()
 
     # -------------------------------
@@ -119,9 +120,11 @@ class ThermalPrinter:
             self._print_header(receipt_data)
 
             # Liste des articles
-            self.printer.set(align='center', bold=True)
+            self.printer.set(align='center')
+            self.printer.set(bold=True, underline=0)  # Correction ici
             self.printer.text("Liste des articles\n")
-            self.printer.set(align='left', bold=False)
+            self.printer.set(align='left')
+            self.printer.set(bold=False)  # Correction ici
 
             currency = self.settings.get('currency', 'Ar')
             for i, item in enumerate(receipt_data['items'], 1):
@@ -129,9 +132,9 @@ class ThermalPrinter:
                 if len(name) > 44:
                     name = name[:41] + "..."
 
-                self.printer.set(bold=True)
+                self.printer.set(bold=True, underline=0)  # Correction ici
                 self.printer.text(f"{i}. {name}\n")
-                self.printer.set(bold=False)
+                self.printer.set(bold=False)  # Correction ici
 
                 qty = item["quantity"]
                 unit = item["unit_price"]
@@ -141,11 +144,13 @@ class ThermalPrinter:
 
             # Total
             self._print_separator()
-            self.printer.set(align='center', bold=True)
+            self.printer.set(align='center')
+            self.printer.set(bold=True, underline=0)  # Correction ici
             self.printer.text("TOTAL A PAYER\n")
             self.printer.set(width=2, height=2)
             self.printer.text(f"{receipt_data['total']:,.0f} {currency}\n")
-            self.printer.set(width=1, height=1, bold=False)
+            self.printer.set(width=1, height=1)
+            self.printer.set(bold=False)  # Correction ici
 
             payment = receipt_data.get("payment_method", "Espèces")
             self.printer.text(f"Paiement: {payment}\n")
