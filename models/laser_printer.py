@@ -149,33 +149,40 @@ class LaserPrinter:
         return f"{name:<18} {qty:>4} {price:>8} {total:>8}\n"
 
     def _build_footer(self, data):
-        """Construit le footer avec le montant en lettres"""
+        """Construit le footer avec le montant en lettres et Total aligné à droite"""
         currency = self.settings.get("currency", "Ar")
         total_amount = int(data['total'])
         amount_in_words = self._number_to_french(total_amount).capitalize()
         
         f = []
         f.append(self._sep())
-        f.append("TOTAL A PAYER".center(self.line_width) + "\n")
-        f.append(f"{total_amount:,.0f} {currency}".center(self.line_width) + "\n")
+        
+        # "Total" à gauche, montant à droite (aligné avec la colonne Montant)
+        total_label = "Total"
+        amount_str = f"{total_amount:,.0f} {currency}"
+        # Calcul pour aligner le montant dans la dernière colonne (8 caractères)
+        # line_width = 40, on veut aligner à droite comme les montants des articles
+        spaces_needed = self.line_width - len(total_label) - len(amount_str)
+        f.append(total_label + (" " * spaces_needed) + amount_str + "\n")
         
         # Montant en lettres (peut prendre plusieurs lignes si long)
-        # On découpe intelligemment si le texte est trop long
-        words_line = f"({amount_in_words} {currency.lower()})"
+        words_line = f"En lettre: {amount_in_words} {currency.lower()}"
         if len(words_line) <= self.line_width:
-            f.append(words_line.center(self.line_width) + "\n")
+            f.append(words_line + "\n")
         else:
             # Découpe en plusieurs lignes si nécessaire
-            words = words_line.split()
+            prefix = "En lettre: "
+            f.append(prefix + "\n")
+            words = (amount_in_words + " " + currency.lower()).split()
             current_line = ""
             for word in words:
                 if len(current_line) + len(word) + 1 <= self.line_width:
                     current_line += word + " "
                 else:
-                    f.append(current_line.strip().center(self.line_width) + "\n")
+                    f.append(current_line.strip() + "\n")
                     current_line = word + " "
             if current_line:
-                f.append(current_line.strip().center(self.line_width) + "\n")
+                f.append(current_line.strip() + "\n")
         
         f.append("\n")
         f.append("La gérance".rjust(self.line_width) + "\n")
