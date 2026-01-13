@@ -156,7 +156,7 @@ class LaserPrinter:
         
         f = []
         f.append(self._sep())
-        f.append("TOTAL A PAYER".center(self.line_width) + " ")
+        f.append("TOTAL A PAYER".center(self.line_width) + "\n")
         f.append(f"{total_amount:,.0f} {currency}".center(self.line_width) + "\n")
         
         # Montant en lettres (peut prendre plusieurs lignes si long)

@@ -18,11 +18,31 @@ class ThermalPrinter:
         self.line_width = 48
 
     def connect(self):
+        """Connexion à l'imprimante avec fermeture propre de l'ancienne connexion"""
         try:
+            # Fermer la connexion existante si elle existe
+            if self.printer:
+                try:
+                    self.printer.close()
+                except:
+                    pass
+                self.printer = None
+            
+            # Créer une nouvelle connexion
             self.printer = Usb(0x1fc9, 0x2016, in_ep=0x81, out_ep=0x02)
             return True, "Imprimante connectée"
         except Exception as e:
             return False, f"Erreur de connexion: {str(e)}"
+
+    def disconnect(self):
+        """Fermer proprement la connexion à l'imprimante"""
+        if self.printer:
+            try:
+                self.printer.close()
+            except:
+                pass
+            finally:
+                self.printer = None
 
     def _print_separator(self, char='='):
         self.printer.text(char * self.line_width + "\n")
@@ -32,8 +52,8 @@ class ThermalPrinter:
         Affiche deux textes sur la même ligne (80mm = 48 chars).
         LEFT = FOURNISSEUR, RIGHT = CLIENT
         """
-        left = left.strip()
-        right = right.strip()
+        left = str(left).strip()
+        right = str(right).strip()
 
         total_len = len(left) + len(right)
 
@@ -64,9 +84,9 @@ class ThermalPrinter:
         supplier_lines.extend(company.get('company_address', '').split("\n"))
 
         # Ligne 0: company_name | DOIT (en gras)
-        # On utilise directement text() avec double hauteur pour le gras
         self.printer.set(width=2, height=2)
-        self.printer.text(self.side_by_side(supplier_lines[0][:20], "DOIT"))
+        left_text = supplier_lines[0][:20] if supplier_lines else ""
+        self.printer.text(self.side_by_side(left_text, "DOIT"))
         self.printer.set(width=1, height=1)
 
         # Ligne 1: téléphone | nom client
@@ -101,12 +121,12 @@ class ThermalPrinter:
         self._print_separator()
 
     def print_receipt(self, receipt_data):
-        """Imprimer le reçu"""
+        """Imprimer le reçu avec gestion propre de la connexion"""
         try:
-            if not self.printer:
-                ok, msg = self.connect()
-                if not ok:
-                    return False, msg
+            # Toujours reconnecter pour éviter les problèmes de connexion
+            ok, msg = self.connect()
+            if not ok:
+                return False, msg
 
             # Header
             self._print_header(receipt_data)
@@ -172,9 +192,15 @@ class ThermalPrinter:
             self.printer.text("\n\n")
             self.printer.cut()
 
+            # IMPORTANT: Fermer la connexion après chaque impression
+            self.disconnect()
+            
             return True, "Reçu imprimé avec succès"
 
         except Exception as e:
+            # Fermer la connexion même en cas d'erreur
+            self.disconnect()
+            
             import traceback
             error_msg = traceback.format_exc()
             return False, f"Erreur d'impression: {error_msg}"
@@ -195,10 +221,15 @@ class ThermalPrinter:
         return self.print_receipt(data)
 
     def check_connection(self):
+        """Vérifier la connexion à l'imprimante"""
         try:
             ok, msg = self.connect()
-            if ok and self.printer:
-                self.printer = None
+            if ok:
+                self.disconnect()
             return ok, msg
         except Exception as e:
             return False, str(e)
+
+    def __del__(self):
+        """Destructeur pour s'assurer que la connexion est fermée"""
+        self.disconnect()
