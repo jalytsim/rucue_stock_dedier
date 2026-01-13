@@ -12,13 +12,13 @@ class LaserPrinter:
         self.line_width = 40 
         self.max_lines_per_page = 40
         
-        # Quotas d'articles par type de page
+        # Tes quotas d'articles par page
         self.items_first_page = 14
         self.items_middle_page = 20
         self.items_last_page = 14
 
     def _number_to_french(self, n):
-        """Convertit un nombre en lettres françaises (version simplifiée)"""
+        """Convertit un nombre en lettres françaises"""
         if n == 0: return "zéro"
         units = ["", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"]
         teens = ["dix", "onze", "douze", "treize", "quatorze", "quinze", "seize", "dix-sept", "dix-huit", "dix-neuf"]
@@ -57,7 +57,12 @@ class LaserPrinter:
 
     def side_by_side(self, left, right):
         left, right = str(left).strip(), str(right).strip()
-        spaces = max(1, self.line_width - len(left) - len(right))
+        total_len = len(left) + len(right)
+        if total_len >= self.line_width:
+            excess = total_len - self.line_width + 1
+            if len(right) > len(left): right = right[:-excess]
+            else: left = left[:-excess]
+        spaces = self.line_width - len(left) - len(right)
         return left + (" " * spaces) + right + "\n"
 
     def _build_header(self, data):
@@ -79,17 +84,16 @@ class LaserPrinter:
         h.append(self.side_by_side(supplier_lines[2], client_lines[0] if len(client_lines) > 0 else ""))
         h.append(self.side_by_side(supplier_lines[3], client_lines[1] if len(client_lines) > 1 else ""))
         
-        for i, addr_line in enumerate(supplier_lines[4:6]): # Limité pour gagner de la place
+        for i, addr_line in enumerate(supplier_lines[4:6]):
             right_text = client_lines[2] if (i == 0 and len(client_lines) == 3) else ""
             h.append(self.side_by_side(addr_line, right_text))
 
         h.append(self._sep('-'))
-        d_str = data.get('date', datetime.now().strftime("%Y-%m-%d"))
         try:
-            d = datetime.strptime(d_str, "%Y-%m-%d")
+            d = datetime.strptime(data['date'], "%Y-%m-%d")
             date_text = f"Date: {d.strftime('%d/%m/%Y')}"
         except:
-            date_text = f"Date: {d_str}"
+            date_text = f"Date: {data.get('date', '')}"
         h.append(self.side_by_side("", date_text))
         h.append(self._sep())
         return h
@@ -108,101 +112,92 @@ class LaserPrinter:
         
         f = [self._sep()]
         amount_str = f"{total_amount:,.0f} {currency}"
-        f.append(self.side_by_side("TOTAL", amount_str))
+        spaces_needed = self.line_width - len("Total") - len(amount_str)
+        f.append("Total" + (" " * spaces_needed) + amount_str + "\n")
         
         words_line = f"En lettre: {amount_in_words} {currency.lower()}"
-        # Gestion du retour à la ligne pour le montant en lettres
-        if len(words_line) > self.line_width:
+        if len(words_line) <= self.line_width:
+            f.append(words_line + "\n")
+        else:
             f.append("En lettre:\n")
             words = (amount_in_words + " " + currency.lower()).split()
-            line = ""
-            for w in words:
-                if len(line) + len(w) + 1 <= self.line_width:
-                    line += w + " "
+            current_line = ""
+            for word in words:
+                if len(current_line) + len(word) + 1 <= self.line_width:
+                    current_line += word + " "
                 else:
-                    f.append(line.strip() + "\n")
-                    line = w + " "
-            f.append(line.strip() + "\n")
-        else:
-            f.append(words_line + "\n")
+                    f.append(current_line.strip() + "\n")
+                    current_line = word + " "
+            if current_line: f.append(current_line.strip() + "\n")
         
         f.append("\n" + "La gérance".rjust(self.line_width) + "\n")
         f.append("................".rjust(self.line_width) + "\n")
-        f.append(self._sep())
+        f.append("\n" + self._sep())
         f.append("Merci pour votre achat!".center(self.line_width) + "\n")
+        f.append("Mankasitraka Tompoko!".center(self.line_width) + "\n")
         return f
 
     def _format_receipt_with_pagination(self, data):
         items = data["items"]
         header = self._build_header(data)
         footer = self._build_footer(data)
-        col_header = [f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Total':>8}\n", "-"*self.line_width + "\n"]
+        col_header = [f"{'Description':<18} {'Qté':>4} {'P.U':>8} {'Montant':>8}\n", "-"*self.line_width + "\n"]
 
-        # --- LOGIQUE DE DÉCOUPAGE ---
+        # --- DÉCOUPAGE PAR QUOTAS ---
         pages_items = []
         temp_items = list(items)
 
-        # 1. Si tout tient sur une seule page
-        if len(temp_items) <= self.items_last_page and len(temp_items) <= self.items_first_page:
+        if len(temp_items) <= self.items_first_page and len(temp_items) <= self.items_last_page:
             pages_items.append(temp_items)
         else:
-            # 2. On prend la première page
             pages_items.append(temp_items[:self.items_first_page])
             temp_items = temp_items[self.items_first_page:]
-
-            # 3. On prend les pages intermédiaires (tant qu'il en reste plus que pour la dernière)
             while len(temp_items) > self.items_last_page:
                 pages_items.append(temp_items[:self.items_middle_page])
                 temp_items = temp_items[self.items_middle_page:]
-            
-            # 4. On ajoute le reste sur la dernière page
             if temp_items:
                 pages_items.append(temp_items)
 
-        # --- CONSTRUCTION DU TEXTE ---
         total_pages = len(pages_items)
         final_output = []
 
         for i, page_content in enumerate(pages_items):
             page_num = i + 1
-            is_first = (page_num == 1)
-            is_last = (page_num == total_pages)
+            is_first, is_last = (page_num == 1), (page_num == total_pages)
             
-            current_page_text = []
-            if is_first: current_page_text.extend(header)
-            current_page_text.extend(col_header)
+            p_text = []
+            if is_first: p_text.extend(header)
+            p_text.extend(col_header)
 
             for item in page_content:
-                current_page_text.append(self._get_item_row(item))
-                current_page_text.append("\n") # Ligne vide sous chaque article
+                p_text.append(self._get_item_row(item))
+                p_text.append("\n")
 
-            # Calcul du padding pour pousser le footer/numéro en bas
-            used_lines = len(current_page_text)
-            reserved = (len(footer) if is_last else 0) + 1 # +1 pour le numéro de page
-            padding = self.max_lines_per_page - used_lines - reserved
-            
-            if padding > 0:
-                current_page_text.extend(["\n"] * padding)
-            
-            if is_last:
-                current_page_text.extend(footer)
+            used = len(p_text)
+            reserved = (len(footer) if is_last else 0) + 1
+            padding = self.max_lines_per_page - used - reserved
+            if padding > 0: p_text.extend(["\n"] * padding)
+            if is_last: p_text.extend(footer)
 
-            # Numéro de page tout en bas
-            current_page_text.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width) + "\n")
-            final_output.append("".join(current_page_text))
+            p_text.append(f"Page: {page_num}/{total_pages}".rjust(self.line_width) + "\n")
+            final_output.append("".join(p_text))
 
         return "\f".join(final_output)
 
     def print_receipt(self, data):
         try:
-            content = self._format_receipt_with_pagination(data)
-            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt", encoding="utf-8") as tmp:
+            content = self._format_receipt_with_pagination(data).strip()
+            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
                 tmp.write(content)
                 path = tmp.name
 
+            # Retour aux paramètres EXACTS de ton code d'origine
             result = subprocess.run(
                 ["lp", "-d", self.printer_name, "-o", f"media={self.paper_format}",
-                 "-o", "cpi=12", "-o", "lpi=8", "-o", "fit-to-page", path],
+                 "-o", "cpi=12", "-o", "lpi=8", 
+                 "-o", "page-left=5", "-o", "page-right=5",
+                 "-o", "page-top=5", "-o", "page-bottom=5", 
+                 "-o", "fit-to-page", path],
                 capture_output=True, text=True, timeout=10
             )
             os.unlink(path)
