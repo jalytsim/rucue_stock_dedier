@@ -200,7 +200,7 @@ class LaserPrinter:
         
         # Taille du header et footer en lignes
         header_size = len(header)
-        footer_size = len(footer) + 1  # +1 pour le numéro de page
+        footer_size = len(footer)
         
         # En-tête des colonnes (2 lignes)
         column_header = [
@@ -213,28 +213,35 @@ class LaserPrinter:
         lines_per_item = 2
         
         # Calcul de l'espace disponible pour la première page
-        first_page_available = self.max_lines_per_page - header_size - column_header_size - footer_size
-        first_page_items = first_page_available // lines_per_item
+        # max_lines = 40, on réserve 1 ligne pour le numéro de page en bas
+        first_page_available = self.max_lines_per_page - header_size - column_header_size - footer_size - 1
+        first_page_items = max(0, first_page_available // lines_per_item)
         
-        # Calcul pour les pages suivantes
-        other_page_available = self.max_lines_per_page - column_header_size - footer_size
-        other_page_items = other_page_available // lines_per_item
+        # Calcul pour les pages suivantes (pas de header, seulement column_header)
+        other_page_available = self.max_lines_per_page - column_header_size - footer_size - 1
+        other_page_items = max(1, other_page_available // lines_per_item)
         
         # Découpage intelligent des items
         pages_items_list = []
         
-        if len(items) <= first_page_items:
-            # Tout tient sur une page
-            pages_items_list.append(items)
+        if len(items) <= first_page_items or first_page_items == 0:
+            # Tout tient sur une page OU première page trop petite
+            if first_page_items == 0:
+                # Pas assez de place pour items sur page 1, tout va en page 2
+                pages_items_list.append([])  # Page 1 vide (juste header)
+                remaining = items
+            else:
+                pages_items_list.append(items)
+                remaining = []
         else:
             # Première page
             pages_items_list.append(items[:first_page_items])
             remaining = items[first_page_items:]
-            
-            # Pages suivantes
-            while remaining:
-                pages_items_list.append(remaining[:other_page_items])
-                remaining = remaining[other_page_items:]
+        
+        # Pages suivantes
+        while remaining:
+            pages_items_list.append(remaining[:other_page_items])
+            remaining = remaining[other_page_items:]
         
         total_pages = len(pages_items_list)
         formatted_pages = []
@@ -255,19 +262,20 @@ class LaserPrinter:
                 page_output.append(self._get_item_row(item))
                 page_output.append("\n")
             
-            # Footer
-            page_output.extend(footer)
-            
-            # Numéro de page
-            page_number_line = f"Page: {page_num}/{total_pages}".rjust(self.line_width)
-            
-            # Padding pour remplir la page
+            # Calculer le padding AVANT le footer pour pousser le footer en bas
             current_lines = len(page_output)
-            padding_needed = self.max_lines_per_page - current_lines - 1  # -1 pour la ligne de numéro
+            lines_needed_for_footer_and_page_num = footer_size + 1  # +1 pour numéro de page
+            padding_needed = self.max_lines_per_page - current_lines - lines_needed_for_footer_and_page_num
             
+            # Ajouter le padding pour pousser le footer en bas
             if padding_needed > 0:
                 page_output.extend(["\n"] * padding_needed)
             
+            # Footer (toujours en bas)
+            page_output.extend(footer)
+            
+            # Numéro de page (dernière ligne)
+            page_number_line = f"Page: {page_num}/{total_pages}".rjust(self.line_width) + "\n"
             page_output.append(page_number_line)
             
             formatted_pages.append("".join(page_output))
