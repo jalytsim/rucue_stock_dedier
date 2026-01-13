@@ -249,37 +249,48 @@ class LaserPrinter:
         # Construction des pages
         for page_num, page_items in enumerate(pages_items_list, 1):
             page_output = []
-            
-            # Header uniquement sur la première page
-            if page_num == 1:
+
+            is_first_page = (page_num == 1)
+            is_last_page = (page_num == total_pages)
+
+            # Première page : header + columns
+            if is_first_page:
                 page_output.extend(header)
-            
-            # En-tête des colonnes
-            page_output.extend(column_header)
-            
+                page_output.extend(column_header)
+            else:
+                # Pages suivantes : seulement header de colonnes
+                page_output.extend(column_header)
+
             # Items de la page
             for item in page_items:
                 page_output.append(self._get_item_row(item))
                 page_output.append("\n")
-            
-            # Calculer le padding AVANT le footer pour pousser le footer en bas
+
+            # Calculer le nombre de lignes déjà utilisées
             current_lines = len(page_output)
-            lines_needed_for_footer_and_page_num = footer_size + 1  # +1 pour numéro de page
-            padding_needed = self.max_lines_per_page - current_lines - lines_needed_for_footer_and_page_num
-            
-            # Ajouter le padding pour pousser le footer en bas
+
+            # Si dernière page : on réserve footer + page number
+            if is_last_page:
+                reserved_lines = len(footer) + 1
+            else:
+                # Pages intermédiaires : seulement numéro de page
+                reserved_lines = 1
+
+            padding_needed = self.max_lines_per_page - current_lines - reserved_lines
+
             if padding_needed > 0:
                 page_output.extend(["\n"] * padding_needed)
-            
-            # Footer (toujours en bas)
-            page_output.extend(footer)
-            
-            # Numéro de page (dernière ligne)
+
+            # Ajout du footer uniquement sur la dernière page
+            if is_last_page:
+                page_output.extend(footer)
+
+            # Numéro de page
             page_number_line = f"Page: {page_num}/{total_pages}".rjust(self.line_width) + "\n"
             page_output.append(page_number_line)
-            
+
             formatted_pages.append("".join(page_output))
-        
+
         return "\f".join(formatted_pages)
 
     def print_receipt(self, data):
