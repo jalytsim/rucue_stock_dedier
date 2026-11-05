@@ -1,167 +1,126 @@
 """
-Onglet Produits - Version tactile optimisée
-Gestion de la base de données des produits
+Onglet Produits - produits mémorisés automatiquement à chaque vente
 """
+from tkinter import messagebox
+
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from tkinter import messagebox
-from datetime import datetime
+from ttkbootstrap.dialogs import Querybox
+
+from utils.formatting import fmt_datetime, fmt_money, fmt_qty, parse_number
+from views.ui_helpers import ButtonBar, empty_state, make_tree, row_tag
 
 
 class ProductsTab:
     def __init__(self, parent, controller, main_window):
         self.controller = controller
         self.main_window = main_window
-        
-        self.frame = ttk.Frame(parent)
-        self.is_compact_mode = False
-        
+        self.frame = ttk.Frame(parent, padding=10)
+
+        self.search_var = ttk.StringVar()
+        self.summary_var = ttk.StringVar()
+        self.products = {}
+
         self.create_widgets()
         self.refresh_products()
-        
-        # Détecter le redimensionnement
-        self.frame.bind('<Configure>', self.on_resize)
-    
-    def on_resize(self, event):
-        """Détecter le redimensionnement"""
-        if event.widget == self.frame:
-            width = event.width
-            should_be_compact = width < 900
-            
-            if should_be_compact != self.is_compact_mode:
-                self.is_compact_mode = should_be_compact
-                self.reorganize_layout()
-    
-    def reorganize_layout(self):
-        """Réorganiser le layout"""
-        for widget in self.frame.winfo_children():
-            widget.destroy()
-        self.create_widgets()
-        self.refresh_products()
-    
+        self.search_var.trace_add('write', lambda *a: self.refresh_products())
+
     def create_widgets(self):
-        """Créer les widgets de l'onglet"""
-        # Zone scrollable
-        scroll_container = ttk.Frame(self.frame)
-        scroll_container.pack(fill=BOTH, expand=YES, padx=8, pady=(8, 0))
-        
-        # Info
-        info_frame = ttk.Frame(scroll_container)
-        info_frame.pack(fill=X, pady=(0, 10))
-        
-        font_size = 10 if self.is_compact_mode else 11
-        ttk.Label(info_frame, 
-                 text="📦 Base de données des produits - Apprentissage automatique",
-                 font=("", font_size, "bold"), bootstyle="info").pack()
-        
-        # Treeview
-        if self.is_compact_mode:
-            columns = ('Produit', 'Prix', 'Qté')
-            widths = {'Produit': 200, 'Prix': 90, 'Qté': 60}
-        else:
-            columns = ('Produit', 'Prix moyen', 'Utilisé', 'Dernière utilisation')
-            widths = {'Produit': 350, 'Prix moyen': 130, 'Utilisé': 100, 'Dernière utilisation': 160}
-        
-        self.products_tree = ttk.Treeview(scroll_container, columns=columns, 
-                                          show='headings', height=15, bootstyle="info")
-        
-        # Style tactile
-        style = ttk.Style()
-        font_size = 10 if self.is_compact_mode else 11
-        style.configure("products.Treeview", font=("", font_size), rowheight=32)
-        style.configure("products.Treeview.Heading", font=("", font_size, "bold"))
-        self.products_tree.configure(style="products.Treeview")
-        
-        for col in columns:
-            self.products_tree.heading(col, text=col)
-            if col == 'Produit':
-                align = W
-            elif col in ['Utilisé', 'Qté']:
-                align = CENTER
-            else:
-                align = E
-            self.products_tree.column(col, width=widths.get(col, 100), anchor=align, minwidth=50)
-        
-        self.products_tree.pack(fill=BOTH, expand=YES, side=LEFT)
-        
-        # Scrollbar tactile
-        scrollbar = ttk.Scrollbar(scroll_container, orient=VERTICAL, 
-                                 command=self.products_tree.yview, bootstyle="round")
-        scrollbar.pack(side=RIGHT, fill=Y, padx=2)
-        self.products_tree.configure(yscrollcommand=scrollbar.set)
-        
-        # Zone FIXE pour les boutons
-        self._create_fixed_buttons()
-    
-    def _create_fixed_buttons(self):
-        """Créer la zone de boutons fixe"""
-        ttk.Separator(self.frame, orient=HORIZONTAL).pack(fill=X, padx=8)
-        
-        btn_frame = ttk.Frame(self.frame)
-        btn_frame.pack(fill=X, side=BOTTOM, padx=8, pady=8)
-        
-        if self.is_compact_mode:
-            # Boutons empilés
-            ttk.Button(btn_frame, text="🔄 Actualiser", 
-                      command=self.refresh_products, bootstyle="info").pack(
-                          fill=X, ipady=12, pady=2)
-            ttk.Button(btn_frame, text="🗑️ Supprimer", 
-                      command=self.delete_product, bootstyle="danger").pack(
-                          fill=X, ipady=12, pady=2)
-        else:
-            # Boutons côte à côte
-            ttk.Button(btn_frame, text="🔄 Actualiser", 
-                      command=self.refresh_products, bootstyle="info", 
-                      width=20).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
-            ttk.Button(btn_frame, text="🗑️ Supprimer le produit", 
-                      command=self.delete_product, bootstyle="danger", 
-                      width=20).pack(side=LEFT, padx=3, ipady=10, fill=X, expand=YES)
-    
+        top = ttk.Frame(self.frame)
+        top.pack(fill=X, pady=(0, 8))
+        ttk.Label(top, text="🔍", font=("", 14)).pack(side=LEFT, padx=(0, 6))
+        self.search_entry = ttk.Entry(top, textvariable=self.search_var, font=("", 13))
+        self.search_entry.pack(side=LEFT, fill=X, expand=YES, ipady=4)
+        self.search_entry.bind("<Escape>", lambda e: self.search_var.set(""))
+        ttk.Label(top, text="Les produits sont mémorisés automatiquement à chaque vente",
+                  style="Muted.TLabel").pack(side=LEFT, padx=10)
+
+        columns = [
+            ("name", "Produit", 320, W, True),
+            ("price", "Dernier prix", 140, E, False),
+            ("count", "Ventes", 90, CENTER, False),
+            ("revenue", "Chiffre d'affaires", 170, E, False),
+            ("last", "Dernière vente", 160, CENTER, False),
+        ]
+        tree_frame, self.products_tree = make_tree(self.frame, columns, height=14, selectmode="browse")
+        tree_frame.pack(fill=BOTH, expand=YES)
+        self.products_tree.bind("<Double-1>", lambda e: self.edit_price())
+        self.products_tree.bind("<Return>", lambda e: self.edit_price())
+        self.products_tree.bind("<Delete>", lambda e: self.delete_product())
+        self.products_tree.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
+
+        ttk.Label(self.frame, textvariable=self.summary_var, style="Muted.TLabel").pack(anchor=W, pady=(6, 4))
+
+        bar = ButtonBar(self.frame, wide_columns=3, narrow_columns=3)
+        bar.pack(fill=X)
+        self.edit_btn = bar.add("✏  Modifier le prix", self.edit_price, "primary")
+        self.delete_btn = bar.add("🗑  Supprimer", self.delete_product, "danger-outline")
+        bar.add("↻  Actualiser", self.refresh_products, "secondary-outline")
+        self._update_buttons()
+
+    def _update_buttons(self):
+        state = NORMAL if self.products_tree.selection() else DISABLED
+        self.edit_btn.configure(state=state)
+        self.delete_btn.configure(state=state)
+
     def refresh_products(self):
-        """Rafraîchir la liste des produits"""
-        for item in self.products_tree.get_children():
-            self.products_tree.delete(item)
-        
-        products = self.controller.get_all_products()
-        currency = self.controller.db.get_setting('currency', 'Ar')
-        
-        for product in products:
-            product_id, name, avg_price, count, total_sold, last_used = product
-            
-            try:
-                last_used_obj = datetime.fromisoformat(last_used)
-                formatted_last = last_used_obj.strftime('%d/%m/%Y %H:%M')
-            except:
-                formatted_last = last_used or "N/A"
-            
-            if self.is_compact_mode:
-                values = (
-                    name,
-                    f"{avg_price:,.0f}",
-                    f"{count}"
-                )
-            else:
-                values = (
-                    name,
-                    f"{avg_price:,.0f} {currency}",
-                    f"{count} fois",
-                    formatted_last
-                )
-            
-            self.products_tree.insert('', 'end', values=values, tags=(product_id,))
-    
-    def delete_product(self):
-        """Supprimer un produit"""
+        query = self.search_var.get().strip()
+        products = self.controller.get_all_products(query)
+        currency = self.controller.get_currency()
+
+        self.products_tree.delete(*self.products_tree.get_children())
+        self.products = {}
+        for i, (product_id, name, price, count, total_sold, last_used) in enumerate(products):
+            iid = str(product_id)
+            self.products[iid] = (name, price)
+            self.products_tree.insert('', END, iid=iid, tags=(row_tag(i),), values=(
+                name, fmt_money(price, currency), count or 0, fmt_money(total_sold or 0, currency),
+                fmt_datetime(last_used) or "—"))
+
+        n = len(products)
+        self.summary_var.set(f"{n} produit{'s' if n > 1 else ''}" if n else "")
+        empty_state(self.products_tree,
+                    f"Aucun produit ne correspond à « {query} »" if query else
+                    "Aucun produit pour l'instant\nIls apparaîtront ici après votre première vente")
+        self._update_buttons()
+
+    def _selected(self):
         selection = self.products_tree.selection()
         if not selection:
-            messagebox.showwarning("Attention", "Veuillez sélectionner un produit", 
-                                 parent=self.frame)
+            self.main_window.toast.show("Sélectionnez d'abord un produit", "warning")
+            return None, None
+        return selection[0], self.products.get(selection[0])
+
+    def edit_price(self):
+        iid, product = self._selected()
+        if not product:
             return
-        
-        if messagebox.askyesno("Confirmation", "Voulez-vous vraiment supprimer ce produit ?", 
-                              parent=self.frame):
-            product_id = self.products_tree.item(selection[0])['tags'][0]
-            self.controller.delete_product(product_id)
+        name, price = product
+        value = Querybox.get_string(prompt=f"Nouveau prix pour « {name} » :", title="Modifier le prix",
+                                    initialvalue=fmt_qty(price), parent=self.frame.winfo_toplevel())
+        if value is None:
+            return
+        try:
+            new_price = parse_number(value)
+            if new_price <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Prix invalide", "Le prix doit être un nombre supérieur à 0.", parent=self.frame)
+            return
+        self.controller.update_product_price(int(iid), new_price)
+        self.refresh_products()
+        self.products_tree.selection_set(iid)
+        self.main_window.toast.show(f"Prix de « {name} » mis à jour")
+
+    def delete_product(self):
+        iid, product = self._selected()
+        if not product:
+            return
+        if messagebox.askyesno("Supprimer le produit",
+                               f"Supprimer « {product[0]} » de la liste des produits ?\n\n"
+                               "Les reçus déjà enregistrés ne sont pas modifiés.",
+                               icon="warning", parent=self.frame):
+            self.controller.delete_product(int(iid))
             self.refresh_products()
             self.main_window.statistics_tab.refresh_statistics()
-            messagebox.showinfo("Succès", "Produit supprimé avec succès", parent=self.frame)
+            self.main_window.toast.show("Produit supprimé")

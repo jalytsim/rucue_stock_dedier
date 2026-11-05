@@ -1,7 +1,10 @@
+import os
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime
-import os
+
+from utils.formatting import fmt_amount, fmt_qty, number_to_french
 from utils.name_formatter import format_client_name
 
 class LaserPrinter:
@@ -19,38 +22,7 @@ class LaserPrinter:
 
     def _number_to_french(self, n):
         """Convertit un nombre en lettres françaises"""
-        if n == 0: return "zéro"
-        units = ["", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"]
-        teens = ["dix", "onze", "douze", "treize", "quatorze", "quinze", "seize", "dix-sept", "dix-huit", "dix-neuf"]
-        tens = ["", "", "vingt", "trente", "quarante", "cinquante", "soixante", "soixante", "quatre-vingt", "quatre-vingt"]
-        
-        def convert_below_100(n):
-            if n < 10: return units[n]
-            elif n < 20: return teens[n - 10]
-            elif n < 70:
-                u, t = n % 10, n // 10
-                if u == 0: return tens[t]
-                return f"{tens[t]} et un" if u == 1 else f"{tens[t]}-{units[u]}"
-            elif n < 80: return f"soixante-{teens[n - 70]}"
-            elif n < 100:
-                u = n % 10
-                if n == 80: return "quatre-vingts"
-                return f"quatre-vingt-{units[u]}"
-            return ""
-
-        def convert_below_1000(n):
-            if n < 100: return convert_below_100(n)
-            h, r = n // 100, n % 100
-            res = "cent" if h == 1 else f"{units[h]} cent"
-            if r == 0: return res + ("s" if h > 1 else "")
-            return f"{res} {convert_below_100(r)}"
-
-        if n < 1000: return convert_below_1000(n)
-        if n < 1000000:
-            th, r = n // 1000, n % 1000
-            res = "mille" if th == 1 else f"{convert_below_1000(th)} mille"
-            return f"{res} {convert_below_1000(r)}" if r > 0 else res
-        return "nombre trop grand"
+        return number_to_french(n)
 
     def _sep(self, char='='):
         return char * self.line_width + "\n"
@@ -94,15 +66,15 @@ class LaserPrinter:
             date_text = f"Date: {d.strftime('%d/%m/%Y')}"
         except:
             date_text = f"Date: {data.get('date', '')}"
-        h.append(self.side_by_side("", date_text))
+        h.append(self.side_by_side(f"No: {data.get('receipt_number', '')}", date_text))
         h.append(self._sep())
         return h
 
     def _get_item_row(self, item):
         name = item["name"][:17] 
-        qty = str(item['quantity'])
-        price = f"{item['unit_price']:,.0f}"
-        total = f"{item['total']:,.0f}"
+        qty = fmt_qty(item['quantity'])
+        price = fmt_amount(item['unit_price'])
+        total = fmt_amount(item['total'])
         return f"{name:<18} {qty:>4} {price:>8} {total:>8}\n"
 
     def _build_footer(self, data):
@@ -111,7 +83,7 @@ class LaserPrinter:
         amount_in_words = self._number_to_french(total_amount).capitalize()
         
         f = [self._sep()]
-        amount_str = f"{total_amount:,.0f} {currency}"
+        amount_str = f"{fmt_amount(total_amount)} {currency}"
         spaces_needed = self.line_width - len("Total") - len(amount_str)
         f.append("Total" + (" " * spaces_needed) + amount_str + "\n")
         
@@ -184,23 +156,74 @@ class LaserPrinter:
 
         return "\f".join(final_output)
 
+    def _lp_available(self):
+        return shutil.which("lp") is not None
+
     def print_receipt(self, data):
+        if not self._lp_available():
+            return False, ("Commande d'impression 'lp' (CUPS) introuvable.\n"
+                           "L'impression laser directe fonctionne sous Linux avec CUPS.\n"
+                           "Utilisez « Générer PDF » puis imprimez le PDF.")
+        path = None
         try:
             content = self._format_receipt_with_pagination(data).strip()
-            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt",
+                                             encoding="utf-8") as tmp:
                 tmp.write(content)
                 path = tmp.name
 
-            # Retour aux paramètres EXACTS de ton code d'origine
             result = subprocess.run(
                 ["lp", "-d", self.printer_name, "-o", f"media={self.paper_format}",
-                 "-o", "cpi=12", "-o", "lpi=8", 
+                 "-o", "cpi=12", "-o", "lpi=8",
                  "-o", "page-left=5", "-o", "page-right=5",
-                 "-o", "page-top=5", "-o", "page-bottom=5", 
+                 "-o", "page-top=5", "-o", "page-bottom=5",
                  "-o", "fit-to-page", path],
                 capture_output=True, text=True, timeout=10
             )
-            os.unlink(path)
-            return (True, "Impression OK") if result.returncode == 0 else (False, result.stderr)
+            if result.returncode == 0:
+                return True, "Impression OK"
+            return False, result.stderr.strip() or f"lp a échoué (code {result.returncode})"
+        except subprocess.TimeoutExpired:
+            return False, "L'imprimante ne répond pas (délai dépassé)"
         except Exception as e:
             return False, str(e)
+        finally:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+    def check_connection(self):
+        """Vérifier que l'imprimante est connue de CUPS et disponible"""
+        if not shutil.which("lpstat"):
+            return False, ("Commande 'lpstat' (CUPS) introuvable sur ce système.\n"
+                           "L'impression laser directe nécessite Linux avec CUPS.")
+        try:
+            result = subprocess.run(["lpstat", "-p", self.printer_name],
+                                    capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            return False, "CUPS ne répond pas (délai dépassé)"
+        if result.returncode != 0:
+            return False, (f"Imprimante « {self.printer_name} » introuvable.\n"
+                           f"{result.stderr.strip()}")
+        status = result.stdout.strip()
+        if "disabled" in status or "désactivée" in status:
+            return False, f"Imprimante « {self.printer_name} » désactivée :\n{status}"
+        return True, f"Imprimante « {self.printer_name} » disponible\n{status}"
+
+    def test_print(self):
+        """Imprimer un reçu de test"""
+        data = {
+            "receipt_number": "TEST-00001",
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "client_name": "Client Test",
+            "client_contact": "034 00 000 00\nAntananarivo",
+            "items": [
+                {"name": "Produit de test 1", "quantity": 2, "unit_price": 5000, "total": 10000},
+                {"name": "Produit de test 2", "quantity": 1, "unit_price": 15000, "total": 15000},
+            ],
+            "total": 25000,
+            "payment_method": "Espèces",
+        }
+        return self.print_receipt(data)

@@ -1,184 +1,97 @@
 """
-Onglet Statistiques - Version tactile optimisée
-Affichage des statistiques et analyses
+Onglet Statistiques - indicateurs clés et meilleurs produits
 """
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from ttkbootstrap.scrolled import ScrolledFrame
+
+from utils.formatting import fmt_money
+from views.ui_helpers import empty_state, make_tree, row_tag
+
+CARDS = [
+    # (clé, titre, couleur)
+    ("today", "AUJOURD'HUI", "primary"),
+    ("month", "CE MOIS", "info"),
+    ("total", "TOTAL DES VENTES", "success"),
+    ("avg", "PANIER MOYEN", "warning"),
+]
 
 
 class StatisticsTab:
     def __init__(self, parent, controller, main_window):
         self.controller = controller
         self.main_window = main_window
-        
-        self.frame = ttk.Frame(parent)
-        self.is_compact_mode = False
-        
-        # Variables pour les stats
-        self.total_sales_var = ttk.StringVar(value="0 Ar")
-        self.total_receipts_var = ttk.StringVar(value="0")
-        self.avg_sale_var = ttk.StringVar(value="0 Ar")
-        self.unique_products_var = ttk.StringVar(value="0")
-        
+        self.frame = ttk.Frame(parent, padding=10)
+
+        self.card_vars = {key: (ttk.StringVar(value="—"), ttk.StringVar(value="")) for key, _, _ in CARDS}
+        self.cards = []
+        self._columns = None
+
         self.create_widgets()
         self.refresh_statistics()
-        
-        # Détecter le redimensionnement
-        self.frame.bind('<Configure>', self.on_resize)
-    
-    def on_resize(self, event):
-        """Détecter le redimensionnement"""
-        if event.widget == self.frame:
-            width = event.width
-            should_be_compact = width < 900
-            
-            if should_be_compact != self.is_compact_mode:
-                self.is_compact_mode = should_be_compact
-                self.reorganize_layout()
-    
-    def reorganize_layout(self):
-        """Réorganiser le layout"""
-        for widget in self.frame.winfo_children():
-            widget.destroy()
-        self.create_widgets()
-        self.refresh_statistics()
-    
+
     def create_widgets(self):
-        """Créer les widgets de l'onglet"""
-        # Zone scrollable
-        container = ScrolledFrame(self.frame, autohide=True)
-        container.pack(fill=BOTH, expand=YES, padx=8, pady=(8, 0))
-        content = container.container
-        
-        # Cartes de statistiques
-        stats_frame = ttk.Frame(content)
-        stats_frame.pack(fill=X, pady=(0, 15))
-        
-        if self.is_compact_mode:
-            # 1 colonne en mode compact
-            self._create_stat_card_compact(stats_frame, "💰 VENTES TOTALES", 
-                                          self.total_sales_var, "primary", 0)
-            self._create_stat_card_compact(stats_frame, "📄 NOMBRE DE REÇUS", 
-                                          self.total_receipts_var, "success", 1)
-            self._create_stat_card_compact(stats_frame, "📊 VENTE MOYENNE", 
-                                          self.avg_sale_var, "warning", 2)
-            self._create_stat_card_compact(stats_frame, "📦 PRODUITS UNIQUES", 
-                                          self.unique_products_var, "danger", 3)
-        else:
-            # 2 colonnes en mode normal
-            self._create_stat_card(stats_frame, "💰 TOTAL DES VENTES", 
-                                  self.total_sales_var, "primary", 0, 0)
-            self._create_stat_card(stats_frame, "📄 NOMBRE DE REÇUS", 
-                                  self.total_receipts_var, "success", 0, 1)
-            self._create_stat_card(stats_frame, "📊 VENTE MOYENNE", 
-                                  self.avg_sale_var, "warning", 1, 0)
-            self._create_stat_card(stats_frame, "📦 PRODUITS UNIQUES", 
-                                  self.unique_products_var, "danger", 1, 1)
-        
-        # Top produits
-        top_frame = ttk.Labelframe(content, text="🏆 Top 5 des produits les plus vendus", 
-                                   bootstyle="primary", padding=10)
-        top_frame.pack(fill=BOTH, expand=YES, pady=(0, 10))
-        
-        if self.is_compact_mode:
-            columns = ('Rang', 'Produit', 'Qté', 'Total')
-            widths = {'Rang': 50, 'Produit': 150, 'Qté': 50, 'Total': 80}
-        else:
-            columns = ('Rang', 'Produit', 'Quantité vendue', 'Revenu total')
-            widths = {'Rang': 70, 'Produit': 320, 'Quantité vendue': 130, 'Revenu total': 150}
-        
-        self.top_products_tree = ttk.Treeview(top_frame, columns=columns, 
-                                              show='headings', height=6, bootstyle="info")
-        
-        # Style tactile
-        style = ttk.Style()
-        font_size = 10 if self.is_compact_mode else 11
-        style.configure("stats.Treeview", font=("", font_size), rowheight=32)
-        style.configure("stats.Treeview.Heading", font=("", font_size, "bold"))
-        self.top_products_tree.configure(style="stats.Treeview")
-        
-        for col in columns:
-            self.top_products_tree.heading(col, text=col)
-            if col in ['Rang', 'Quantité vendue', 'Qté']:
-                align = CENTER
-            elif col in ['Revenu total', 'Total']:
-                align = E
-            else:
-                align = W
-            self.top_products_tree.column(col, width=widths.get(col, 100), anchor=align, minwidth=40)
-        
-        self.top_products_tree.pack(fill=BOTH, expand=YES)
-        
-        # Zone FIXE pour le bouton actualiser
-        self._create_fixed_button()
-    
-    def _create_fixed_button(self):
-        """Créer le bouton fixe"""
-        ttk.Separator(self.frame, orient=HORIZONTAL).pack(fill=X, padx=8)
-        
-        btn_frame = ttk.Frame(self.frame)
-        btn_frame.pack(fill=X, side=BOTTOM, padx=8, pady=8)
-        
-        ttk.Button(btn_frame, text="🔄 Actualiser les statistiques", 
-                  command=self.refresh_statistics, bootstyle="info").pack(
-                      fill=X, ipady=10)
-    
-    def _create_stat_card(self, parent, title, variable, style, row, col):
-        """Créer une carte de statistique (mode normal)"""
-        card = ttk.Frame(parent, bootstyle=style)
-        card.grid(row=row, column=col, padx=8, pady=8, sticky="nsew")
-        
-        parent.columnconfigure(0, weight=1)
-        parent.columnconfigure(1, weight=1)
-        
-        ttk.Label(card, text=title, font=("", 11, "bold"), 
-                 bootstyle=f"inverse-{style}").pack(pady=(12, 5))
-        ttk.Label(card, textvariable=variable, font=("", 24, "bold"), 
-                 bootstyle=style).pack(pady=(5, 12))
-    
-    def _create_stat_card_compact(self, parent, title, variable, style, row):
-        """Créer une carte de statistique (mode compact)"""
-        card = ttk.Frame(parent, bootstyle=style)
-        card.pack(fill=X, pady=5)
-        
-        ttk.Label(card, text=title, font=("", 10, "bold"), 
-                 bootstyle=f"inverse-{style}").pack(pady=(8, 3))
-        ttk.Label(card, textvariable=variable, font=("", 20, "bold"), 
-                 bootstyle=style).pack(pady=(3, 8))
-    
+        self.cards_frame = ttk.Frame(self.frame)
+        self.cards_frame.pack(fill=X, pady=(0, 12))
+        bg = ttk.Style().colors.light
+        for key, title, color in CARDS:
+            value_var, sub_var = self.card_vars[key]
+            card = ttk.Frame(self.cards_frame, bootstyle="light", padding=(16, 12))
+            ttk.Frame(card, bootstyle=color, width=5).pack(side=LEFT, fill=Y, padx=(0, 14))
+            inner = ttk.Frame(card, bootstyle="light")
+            inner.pack(side=LEFT, fill=BOTH, expand=YES)
+            ttk.Label(inner, text=title, font=("", 10, "bold"), foreground=ttk.Style().colors.secondary,
+                      background=bg).pack(anchor=W)
+            ttk.Label(inner, textvariable=value_var, font=("", 22, "bold"), bootstyle=color,
+                      background=bg).pack(anchor=W, pady=(2, 0))
+            ttk.Label(inner, textvariable=sub_var, font=("", 10), background=bg,
+                      foreground=ttk.Style().colors.secondary).pack(anchor=W)
+            self.cards.append(card)
+        self.cards_frame.bind("<Configure>", self._layout_cards)
+        self._layout_cards(width=1200)
+
+        top = ttk.Labelframe(self.frame, text=" Meilleurs produits (chiffre d'affaires) ",
+                             bootstyle="primary", padding=10)
+        top.pack(fill=BOTH, expand=YES)
+        columns = [
+            ("rank", "Rang", 70, CENTER, False),
+            ("name", "Produit", 320, W, True),
+            ("count", "Nb de ventes", 130, CENTER, False),
+            ("revenue", "Chiffre d'affaires", 180, E, False),
+        ]
+        tree_frame, self.top_products_tree = make_tree(top, columns, height=10)
+        tree_frame.pack(fill=BOTH, expand=YES)
+
+    def _layout_cards(self, event=None, width=None):
+        width = event.width if event else width
+        cols = 4 if width >= 1100 else 2
+        if cols == self._columns:
+            return
+        self._columns = cols
+        for i in range(4):
+            self.cards_frame.columnconfigure(i, weight=1 if i < cols else 0, uniform="card" if i < cols else "")
+        for i, card in enumerate(self.cards):
+            card.grid(row=i // cols, column=i % cols, sticky=NSEW, padx=6, pady=6)
+
     def refresh_statistics(self):
-        """Rafraîchir les statistiques"""
         stats = self.controller.get_statistics()
-        currency = self.controller.db.get_setting('currency', 'Ar')
-        
-        self.total_sales_var.set(f"{stats['total_sales']:,.0f} {currency}")
-        self.total_receipts_var.set(f"{stats['total_receipts']}")
-        self.avg_sale_var.set(f"{stats['avg_sale']:,.0f} {currency}")
-        self.unique_products_var.set(f"{stats['unique_products']}")
-        
-        # Top produits
-        for item in self.top_products_tree.get_children():
-            self.top_products_tree.delete(item)
-        
-        top_products = self.controller.get_top_products(5)
-        
-        for i, product in enumerate(top_products, 1):
-            name, count, revenue = product
-            
-            if self.is_compact_mode:
-                values = (
-                    f"#{i}",
-                    name,
-                    count,
-                    f"{revenue:,.0f}"
-                )
-            else:
-                values = (
-                    f"#{i}",
-                    name,
-                    count,
-                    f"{revenue:,.0f} {currency}"
-                )
-            
-            self.top_products_tree.insert('', 'end', values=values)
+        currency = self.controller.get_currency()
+
+        def plural(n, word):
+            return f"{n} {word}{'s' if n > 1 else ''}"
+
+        values = {
+            "today": (fmt_money(stats['today_sales'], currency), plural(stats['today_receipts'], "reçu")),
+            "month": (fmt_money(stats['month_sales'], currency), plural(stats['month_receipts'], "reçu")),
+            "total": (fmt_money(stats['total_sales'], currency), plural(stats['total_receipts'], "reçu")),
+            "avg": (fmt_money(stats['avg_sale'], currency), plural(stats['unique_products'], "produit") + " connus"),
+        }
+        for key, (value, sub) in values.items():
+            self.card_vars[key][0].set(value)
+            self.card_vars[key][1].set(sub)
+
+        self.top_products_tree.delete(*self.top_products_tree.get_children())
+        for i, (name, count, revenue) in enumerate(self.controller.get_top_products(10)):
+            medal = f"{i + 1}"
+            self.top_products_tree.insert('', END, tags=(row_tag(i),), values=(
+                medal, name, count or 0, fmt_money(revenue or 0, currency)))
+        empty_state(self.top_products_tree, "Pas encore de ventes")

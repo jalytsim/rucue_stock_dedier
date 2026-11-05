@@ -22,14 +22,11 @@ class NameFormatter:
     @staticmethod
     def is_organization(name):
         """Déterminer si le nom est une organisation"""
-        name_upper = name.upper()
-        
-        # Vérifier si un mot-clé d'organisation est présent
-        for keyword in NameFormatter.ORGANIZATION_KEYWORDS:
-            if keyword in name_upper:
-                return True
-        
-        return False
+        # Comparer mot par mot : une recherche de sous-chaîne classait à tort
+        # "RASOANIRINA" (contient "SA") ou "RAKOTONGA" (contient "ONG") en organisation
+        words = re.findall(r"[\wÀ-ÿ]+", name.upper())
+        keywords = set(NameFormatter.ORGANIZATION_KEYWORDS)
+        return any(word in keywords for word in words)
     
     @staticmethod
     def format_person_name(name):

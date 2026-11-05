@@ -3,315 +3,245 @@ Contrôleur principal de l'application
 Version avec formatage intelligent des noms et support adresse
 """
 from datetime import datetime
-import os
 from pathlib import Path
+import traceback
+
 from utils.name_formatter import format_client_name
+
+EXPORTS_DIR = Path('exports')
+
 
 class ReceiptController:
     def __init__(self, database, pdf_generator):
         self.db = database
         self.pdf_generator = pdf_generator
         self.current_items = []
-    
+
+    # ========== ARTICLES EN COURS ==========
+
     def add_item(self, name, quantity, unit_price):
-        """Ajouter un article au reçu en cours"""
-        if not name or quantity <= 0 or unit_price <= 0:
-            return False, "Données invalides"
-        
-        total = quantity * unit_price
-        
+        """Ajouter un article au reçu en cours (fusionne avec une ligne identique)"""
+        name = (name or '').strip()
+        if not name:
+            return False, "Le nom du produit est obligatoire"
+        if quantity <= 0:
+            return False, "La quantité doit être supérieure à 0"
+        if unit_price <= 0:
+            return False, "Le prix unitaire doit être supérieur à 0"
+
+        for item in self.current_items:
+            if item['name'].lower() == name.lower() and item['unit_price'] == unit_price:
+                item['quantity'] += quantity
+                item['total'] = item['quantity'] * item['unit_price']
+                return True, item
+
         item = {
             'name': name,
             'quantity': quantity,
             'unit_price': unit_price,
-            'total': total
+            'total': quantity * unit_price,
         }
-        
         self.current_items.append(item)
-        
-        # Apprendre le produit
-        self.db.add_or_update_product(name, unit_price)
-        
+        # Le produit est mémorisé lors de l'enregistrement du reçu (pas ici),
+        # sinon un article ajouté puis retiré gonflait les statistiques.
         return True, item
-    
+
     def remove_item(self, index):
         """Retirer un article"""
         if 0 <= index < len(self.current_items):
-            removed = self.current_items.pop(index)
-            return True, removed
+            return True, self.current_items.pop(index)
         return False, None
-    
+
     def get_current_items(self):
-        """Obtenir les articles actuels"""
         return self.current_items
-    
+
     def get_current_total(self):
-        """Calculer le total actuel"""
         return sum(item['total'] for item in self.current_items)
-    
+
     def clear_current_items(self):
-        """Vider les articles actuels"""
         self.current_items = []
-    
+
+    # ========== ENREGISTREMENT / IMPRESSION ==========
+
     def _prepare_receipt_data(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
         """Préparer les données du reçu avec formatage du nom"""
-        # Formater le nom du client
-        formatted_name = format_client_name(client_name) if client_name else ''
-        
+        client_name = (client_name or '').strip()
         return {
             'receipt_number': self.db.get_next_receipt_number(),
             'date': datetime.now().strftime('%Y-%m-%d'),
-            'client_name': formatted_name,
-            'client_contact': client_contact,  # Peut être téléphone ou adresse
-            'items': self.current_items.copy(),
+            'client_name': format_client_name(client_name) if client_name else 'Client',
+            'client_contact': (client_contact or '').strip(),
+            'items': [dict(item) for item in self.current_items],
             'total': self.get_current_total(),
             'payment_method': payment_method,
-            'notes': notes
+            'notes': notes,
         }
-    
+
+    def _save_current(self, **client):
+        """Enregistre le reçu en cours. Retourne (receipt_data, erreur)."""
+        if not self.current_items:
+            return None, "Aucun article dans le reçu"
+        receipt_data = self._prepare_receipt_data(**client)
+        try:
+            self.db.save_receipt(receipt_data)
+        except Exception as e:
+            return None, f"Erreur de sauvegarde : {e}"
+        self.clear_current_items()
+        return receipt_data, None
+
+    def _generate_pdf(self, receipt_data, suffix=''):
+        EXPORTS_DIR.mkdir(exist_ok=True)
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = EXPORTS_DIR / f"{receipt_data['receipt_number']}{suffix}_{stamp}.pdf"
+        self.pdf_generator.settings = self.db.get_all_settings()
+        self.pdf_generator.generate_receipt(receipt_data, str(output_path))
+        return str(output_path.resolve())
+
+    def _make_printer(self, kind):
+        settings = self.db.get_all_settings()
+        if kind == 'thermal':
+            from models.thermal_printer import ThermalPrinter
+            return ThermalPrinter(settings)
+        from models.laser_printer import LaserPrinter
+        return LaserPrinter(settings)
+
+    def _print(self, kind, receipt_data):
+        """Imprime receipt_data. Retourne (succès, message)."""
+        try:
+            printer = self._make_printer(kind)
+            return printer.print_receipt(receipt_data)
+        except ImportError as e:
+            return False, (f"Module d'impression manquant : {e}\n"
+                           "Installez-le avec : pip install python-escpos")
+        except Exception as e:
+            return False, f"{e}\n\nDétails :\n{traceback.format_exc()}"
+
     def save_and_generate_receipt(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
-        """Sauvegarder et générer le reçu PDF"""
-        if not self.current_items:
-            return False, "Aucun article à facturer"
-        
-        receipt_data = self._prepare_receipt_data(client_name, client_contact, payment_method, notes)
-        
-        # Sauvegarder dans la base de données
+        """Sauvegarder et générer le reçu PDF. Retourne (succès, chemin_ou_erreur)."""
+        receipt_data, error = self._save_current(client_name=client_name, client_contact=client_contact,
+                                                 payment_method=payment_method, notes=notes)
+        if error:
+            return False, error
         try:
-            self.db.save_receipt(receipt_data)
+            return True, self._generate_pdf(receipt_data)
         except Exception as e:
-            return False, f"Erreur de sauvegarde: {str(e)}"
-        
-        # Générer le PDF
-        try:
-            output_dir = Path('exports')
-            output_dir.mkdir(exist_ok=True)
-            
-            filename = f"{receipt_data['receipt_number']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-            output_path = output_dir / filename
-            
-            settings = self.db.get_all_settings()
-            self.pdf_generator.settings = settings
-            
-            self.pdf_generator.generate_receipt(receipt_data, str(output_path))
-            
-            # Vider les articles actuels
-            self.clear_current_items()
-            
-            return True, str(output_path)
-        
-        except Exception as e:
-            return False, f"Erreur de génération PDF: {str(e)}"
-    
+            return False, (f"Reçu {receipt_data['receipt_number']} enregistré dans l'historique, "
+                           f"mais la génération du PDF a échoué :\n{e}")
+
+    def _save_and_print(self, kind, label, **client):
+        receipt_data, error = self._save_current(**client)
+        if error:
+            return False, error
+        success, message = self._print(kind, receipt_data)
+        number = receipt_data['receipt_number']
+        if success:
+            return True, f"Reçu {number} imprimé ({label}) et enregistré"
+        return False, (f"Reçu {number} enregistré dans l'historique, mais l'impression {label} a échoué.\n"
+                       f"Vous pourrez le réimprimer depuis l'Historique.\n\n{message}")
+
     def print_thermal_receipt(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
-        """Imprimer directement sur l'imprimante thermique et sauvegarder dans l'historique"""
-        if not self.current_items:
-            return False, "Aucun article à imprimer"
-        
-        receipt_data = self._prepare_receipt_data(client_name, client_contact, payment_method, notes)
-        
-        # Sauvegarder dans la base de données AVANT l'impression
-        try:
-            self.db.save_receipt(receipt_data)
-        except Exception as e:
-            return False, f"Erreur de sauvegarde: {str(e)}"
-        
-        # Imprimer sur l'imprimante thermique
-        try:
-            from models.thermal_printer import ThermalPrinter
-            settings = self.db.get_all_settings()
-            printer = ThermalPrinter(settings)
-            
-            success, message = printer.print_receipt(receipt_data)
-            
-            if success:
-                self.clear_current_items()
-                return True, f"Reçu {receipt_data['receipt_number']} imprimé et sauvegardé"
-            else:
-                self.clear_current_items()
-                return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression:\n{message}"
-        
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            self.clear_current_items()
-            return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression:\n{str(e)}\n\nDétails:\n{error_detail}"
-    
+        return self._save_and_print('thermal', 'thermique', client_name=client_name,
+                                    client_contact=client_contact, payment_method=payment_method, notes=notes)
+
     def print_laser_receipt(self, client_name='', client_contact='', payment_method='Espèces', notes=''):
-        """Imprimer directement sur l'imprimante laser et sauvegarder dans l'historique"""
-        if not self.current_items:
-            return False, "Aucun article à imprimer"
-        
-        receipt_data = self._prepare_receipt_data(client_name, client_contact, payment_method, notes)
-        
-        # Sauvegarder dans la base de données AVANT l'impression
-        try:
-            self.db.save_receipt(receipt_data)
-        except Exception as e:
-            return False, f"Erreur de sauvegarde: {str(e)}"
-        
-        # Imprimer sur l'imprimante laser
-        try:
-            from models.laser_printer import LaserPrinter
-            settings = self.db.get_all_settings()
-            printer = LaserPrinter(settings)
-            
-            success, message = printer.print_receipt(receipt_data)
-            
-            if success:
-                self.clear_current_items()
-                return True, f"Reçu {receipt_data['receipt_number']} imprimé (laser) et sauvegardé"
-            else:
-                self.clear_current_items()
-                return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{message}"
-        
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            self.clear_current_items()
-            return False, f"Reçu sauvegardé dans l'historique mais erreur d'impression laser:\n{str(e)}\n\nDétails:\n{error_detail}"
-    
+        return self._save_and_print('laser', 'laser', client_name=client_name,
+                                    client_contact=client_contact, payment_method=payment_method, notes=notes)
+
     def test_thermal_printer(self):
-        """Tester la connexion à l'imprimante thermique"""
         try:
-            from models.thermal_printer import ThermalPrinter
-            settings = self.db.get_all_settings()
-            printer = ThermalPrinter(settings)
-            return printer.check_connection()
+            return self._make_printer('thermal').check_connection()
+        except ImportError as e:
+            return False, f"Module d'impression manquant : {e}\nInstallez-le avec : pip install python-escpos"
         except Exception as e:
-            return False, f"Erreur: {str(e)}"
+            return False, f"Erreur : {e}"
 
     def test_laser_printer(self):
-        """Tester la connexion à l'imprimante laser"""
         try:
-            from models.laser_printer import LaserPrinter
-            settings = self.db.get_all_settings()
-            printer = LaserPrinter(settings)
-            return printer.check_connection()
+            return self._make_printer('laser').check_connection()
         except Exception as e:
-            return False, f"Erreur: {str(e)}"
-    
+            return False, f"Erreur : {e}"
+
+    def test_laser_print(self):
+        try:
+            return self._make_printer('laser').test_print()
+        except Exception as e:
+            return False, f"Erreur : {e}"
+
+    def is_laser_enabled(self):
+        return self.db.get_setting('laser_enabled', 'true') == 'true'
+
+    # ========== PRODUITS ==========
+
     def search_products(self, query):
-        """Rechercher des produits"""
         if not query:
             return []
         return self.db.search_products(query)
-    
-    def get_all_products(self):
-        """Obtenir tous les produits"""
-        return self.db.get_all_products()
-    
+
+    def get_all_products(self, query=''):
+        return self.db.get_all_products(query)
+
     def delete_product(self, product_id):
-        """Supprimer un produit"""
         self.db.delete_product(product_id)
-    
+
+    def update_product_price(self, product_id, unit_price):
+        self.db.update_product_price(product_id, unit_price)
+
+    # ========== HISTORIQUE ==========
+
     def get_all_receipts(self):
-        """Obtenir tous les reçus"""
         return self.db.get_all_receipts()
-    
+
     def search_receipts(self, query):
-        """Rechercher des reçus"""
         return self.db.search_receipts(query)
-    
+
     def get_receipt_details(self, receipt_id):
-        """Obtenir les détails d'un reçu"""
         return self.db.get_receipt_by_id(receipt_id)
-    
+
     def delete_receipt(self, receipt_id):
-        """Supprimer un reçu"""
         self.db.delete_receipt(receipt_id)
-    
+
     def regenerate_receipt(self, receipt_id):
-        """Régénérer un reçu existant"""
         receipt_data = self.db.get_receipt_by_id(receipt_id)
-        
         if not receipt_data:
             return False, "Reçu introuvable"
-        
         try:
-            output_dir = Path('exports')
-            output_dir.mkdir(exist_ok=True)
-            
-            filename = f"{receipt_data['receipt_number']}_regenere_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-            output_path = output_dir / filename
-            
-            settings = self.db.get_all_settings()
-            self.pdf_generator.settings = settings
-            
-            self.pdf_generator.generate_receipt(receipt_data, str(output_path))
-            
-            return True, str(output_path)
-        
+            return True, self._generate_pdf(receipt_data, suffix='_regenere')
         except Exception as e:
-            return False, f"Erreur: {str(e)}"
-    
+            return False, f"Erreur : {e}"
+
+    def _reprint(self, kind, label, receipt_id):
+        receipt_data = self.db.get_receipt_by_id(receipt_id)
+        if not receipt_data:
+            return False, "Reçu introuvable"
+        success, message = self._print(kind, receipt_data)
+        if success:
+            return True, f"Reçu {receipt_data['receipt_number']} réimprimé ({label})"
+        return False, f"Erreur de réimpression {label} :\n{message}"
+
     def reprint_thermal_receipt(self, receipt_id):
-        """Réimprimer un reçu existant sur l'imprimante thermique"""
-        receipt_data = self.db.get_receipt_by_id(receipt_id)
-        
-        if not receipt_data:
-            return False, "Reçu introuvable"
-        
-        try:
-            from models.thermal_printer import ThermalPrinter
-            settings = self.db.get_all_settings()
-            printer = ThermalPrinter(settings)
-            
-            success, message = printer.print_receipt(receipt_data)
-            
-            if success:
-                return True, f"Reçu {receipt_data['receipt_number']} réimprimé avec succès"
-            else:
-                return False, message
-        
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            return False, f"Erreur de réimpression:\n{str(e)}\n\nDétails:\n{error_detail}"
+        return self._reprint('thermal', 'thermique', receipt_id)
 
     def reprint_laser_receipt(self, receipt_id):
-        """Réimprimer un reçu existant sur l'imprimante laser"""
-        receipt_data = self.db.get_receipt_by_id(receipt_id)
-        
-        if not receipt_data:
-            return False, "Reçu introuvable"
-        
-        try:
-            from models.laser_printer import LaserPrinter
-            settings = self.db.get_all_settings()
-            printer = LaserPrinter(settings)
-            
-            success, message = printer.print_receipt(receipt_data)
-            
-            if success:
-                return True, f"Reçu {receipt_data['receipt_number']} réimprimé (laser) avec succès"
-            else:
-                return False, message
-        
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            return False, f"Erreur de réimpression laser:\n{str(e)}\n\nDétails:\n{error_detail}"
-    
+        return self._reprint('laser', 'laser', receipt_id)
+
+    # ========== STATISTIQUES / PARAMÈTRES ==========
+
     def get_statistics(self):
-        """Obtenir les statistiques"""
         return self.db.get_statistics()
-    
+
     def get_top_products(self, limit=5):
-        """Obtenir les produits les plus vendus"""
         return self.db.get_top_products(limit)
-    
+
     def save_settings(self, settings_dict):
-        """Sauvegarder les paramètres"""
-        for key, value in settings_dict.items():
-            self.db.set_setting(key, value)
-    
+        self.db.set_settings(settings_dict)
+
     def get_settings(self):
-        """Obtenir les paramètres"""
         return self.db.get_all_settings()
-    
+
+    def get_currency(self):
+        return self.db.get_setting('currency', 'Ar')
+
     def clear_all_data(self):
-        """Effacer toutes les données"""
         self.db.clear_all_receipts()
         self.db.clear_all_products()
         self.clear_current_items()

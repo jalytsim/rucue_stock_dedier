@@ -4,38 +4,53 @@ Générateur de Reçus Pro
 Application desktop pour générer des reçus thermiques
 """
 
+import os
 import sys
 from pathlib import Path
 
-# Ajouter le répertoire parent au path
-sys.path.insert(0, str(Path(__file__).parent))
+
+def get_base_dir():
+    """Dossier de l'application (à côté de l'exécutable si packagé avec PyInstaller)"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+BASE_DIR = get_base_dir()
+
+# Les chemins relatifs (data/, exports/) doivent pointer vers le dossier de l'application,
+# même si elle est lancée depuis un raccourci ou un autre répertoire.
+os.chdir(BASE_DIR)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from models.database import Database
 from utils.pdf_generator import ReceiptGenerator
 from controllers.receipt_controller import ReceiptController
 from views.main_window import MainWindow
 
+
+def log(message):
+    """print() qui ne plante pas sur une console non UTF-8 ou absente (exe fenêtré)"""
+    try:
+        print(message)
+    except Exception:
+        pass
+
+
 def main():
     """Point d'entrée principal de l'application"""
-    print("🚀 Démarrage de l'application...")
-    
-    # Initialiser la base de données
-    db = Database("data/receipts.db")
-    print("✅ Base de données initialisée")
-    
-    # Initialiser le générateur PDF
-    settings = db.get_all_settings()
-    pdf_generator = ReceiptGenerator(settings)
-    print("✅ Générateur PDF initialisé")
-    
-    # Initialiser le contrôleur
+    log("Démarrage de l'application...")
+
+    db = Database(BASE_DIR / "data" / "receipts.db")
+    log("Base de données initialisée")
+
+    pdf_generator = ReceiptGenerator(db.get_all_settings())
     controller = ReceiptController(db, pdf_generator)
-    print("✅ Contrôleur initialisé")
-    
-    # Créer et lancer l'interface
-    print("✅ Lancement de l'interface graphique...")
+
+    log("Lancement de l'interface graphique...")
     app = MainWindow(controller)
     app.run()
+
 
 if __name__ == "__main__":
     main()

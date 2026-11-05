@@ -4,8 +4,11 @@ Imprime directement sur l'imprimante XP-Q300 sans passer par PDF
 Version avec espacement réduit - Fournisseur à gauche (Sans NIF/STAT), Client à droite
 """
 
-from escpos.printer import Usb
 from datetime import datetime
+
+from escpos.printer import Usb
+
+from utils.formatting import fmt_amount, fmt_qty
 
 
 class ThermalPrinter:
@@ -157,7 +160,7 @@ class ThermalPrinter:
                 unit = item["unit_price"]
                 total = item["total"]
 
-                self.printer.text(f"   {qty:.0f} x {unit:,.0f} {currency} = {total:,.0f} {currency}\n")
+                self.printer.text(f"   {fmt_qty(qty)} x {fmt_amount(unit)} {currency} = {fmt_amount(total)} {currency}\n")
 
             # Total
             self._print_separator()
@@ -168,7 +171,7 @@ class ThermalPrinter:
             self.printer.text(" " * spaces + title + "\n")
             
             # Montant en grand
-            amount_str = f"{receipt_data['total']:,.0f} {currency}"
+            amount_str = f"{fmt_amount(receipt_data['total'])} {currency}"
             spaces = (self.line_width - len(amount_str) * 2) // 2
             self.printer.set(width=2, height=2)
             self.printer.text(" " * (spaces // 2) + amount_str + "\n")

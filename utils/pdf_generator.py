@@ -10,11 +10,17 @@ from reportlab.lib.units import mm as mm_unit
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from datetime import datetime
+from xml.sax.saxutils import escape
+
+from utils.formatting import fmt_amount, fmt_qty, fmt_date
 
 class ReceiptGenerator:
     def __init__(self, settings):
         self.settings = settings
-        self.paper_width = float(settings.get('paper_width', '58'))  # mm
+        try:
+            self.paper_width = float(settings.get('paper_width', '58'))  # mm
+        except (TypeError, ValueError):
+            self.paper_width = 58.0
         
         # Définir la taille de page selon le format
         if self.paper_width == 58:
@@ -187,28 +193,29 @@ class ReceiptGenerator:
         
         # ========== LIGNE 1 : CLIENT | NOM SOCIÉTÉ ==========
         left_col = [Paragraph("<b>CLIENT</b>", styles['HeaderBold'])]
-        right_col = [Paragraph(f"<b>{self.settings.get('company_name', '')}</b>", styles['HeaderBoldRight'])]
+        right_col = [Paragraph(f"<b>{escape(self.settings.get('company_name', ''))}</b>", styles['HeaderBoldRight'])]
         
         header_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
         header_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
         elements.append(header_table)
         
         # ========== LIGNE 2 : NOM CLIENT | TÉL SOCIÉTÉ ==========
-        client_name = receipt_data.get('client_name', '(Non spécifié)')
+        client_name = receipt_data.get('client_name') or '(Non spécifié)'
         company_phone = self.settings.get('company_phone', '')
         
-        left_col = [Paragraph(client_name, styles['Tiny'])]
-        right_col = [Paragraph(company_phone, styles['TinyRight'])]
+        left_col = [Paragraph(escape(client_name), styles['Tiny'])]
+        right_col = [Paragraph(escape(company_phone), styles['TinyRight'])]
         
         line2_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
         line2_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
         elements.append(line2_table)
         
         # ========== LIGNE 3 : TÉL CLIENT | NIF SOCIÉTÉ ==========
-        client_phone = receipt_data.get('client_phone', '')
+        # Contact client (téléphone et/ou adresse, plusieurs lignes possibles)
+        contact_lines = [l.strip() for l in (receipt_data.get('client_contact') or '').splitlines() if l.strip()]
         nif = self.settings.get('company_nif', '')
         
-        left_col = [Paragraph(client_phone, styles['Tiny'])]
+        left_col = [Paragraph("<br/>".join(escape(l) for l in contact_lines[:3]), styles['Tiny'])]
         right_col = [Paragraph(f"NIF: {nif}" if nif else "", styles['TinyRight'])]
         
         line3_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
@@ -219,7 +226,7 @@ class ReceiptGenerator:
         stat = self.settings.get('company_stat', '')
         if stat:
             left_col = [Paragraph("", styles['Tiny'])]
-            right_col = [Paragraph(f"STAT: {stat}", styles['TinyRight'])]
+            right_col = [Paragraph(f"STAT: {escape(stat)}", styles['TinyRight'])]
             
             stat_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
             stat_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
@@ -230,7 +237,7 @@ class ReceiptGenerator:
         for line in address.split('\n'):
             if line.strip():
                 left_col = [Paragraph("", styles['Tiny'])]
-                right_col = [Paragraph(line.strip(), styles['TinyRight'])]
+                right_col = [Paragraph(escape(line.strip()), styles['TinyRight'])]
                 
                 addr_table = Table([[left_col, right_col]], colWidths=[col_width, col_width])
                 addr_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
@@ -241,12 +248,7 @@ class ReceiptGenerator:
         elements.append(Spacer(1, 0.5 * mm_unit))
         
         # ========== N° FACTURE | DATE (SUR UNE LIGNE) ==========
-        date_str = receipt_data['date']
-        try:
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-            formatted_date = date_obj.strftime('%d/%m/%Y')
-        except:
-            formatted_date = date_str
+        formatted_date = fmt_date(receipt_data['date'])
         
         left_col = [Paragraph(f"<b>No: {receipt_data['receipt_number']}</b>", styles['SmallBold'])]
         right_col = [Paragraph(f"<b>Date: {formatted_date}</b>", styles['SmallBold'])]
@@ -263,7 +265,7 @@ class ReceiptGenerator:
         currency = self.settings.get('currency', 'Ar')
         total = receipt_data['total']
         elements.append(Paragraph("TOTAL À PAYER", styles['CenterBold']))
-        elements.append(Paragraph(f"{total:,.0f} {currency}", styles['Total']))
+        elements.append(Paragraph(f"{fmt_amount(total)} {escape(currency)}", styles['Total']))
         
         elements.append(Spacer(1, 1 * mm_unit))
         elements.append(self._create_line())
@@ -293,7 +295,7 @@ class ReceiptGenerator:
                 name = name[:32] + "..."
             
             item_elements.append(
-                Paragraph(f"{i}. {name}", styles['SmallBold'])
+                Paragraph(f"{i}. {escape(name)}", styles['SmallBold'])
             )
             
             # Ligne 2: Qté x Prix = Total
@@ -301,7 +303,7 @@ class ReceiptGenerator:
             unit = item['unit_price']
             total = item['total']
             
-            detail = f"   {qty:.0f} x {unit:,.0f} = <b>{total:,.0f} {currency}</b>"
+            detail = f"   {fmt_qty(qty)} x {fmt_amount(unit)} = <b>{fmt_amount(total)} {escape(currency)}</b>"
             item_elements.append(
                 Paragraph(detail, styles['Small'])
             )
@@ -322,11 +324,11 @@ class ReceiptGenerator:
         total = receipt_data['total']
         
         elements.append(Paragraph("TOTAL À PAYER", styles['CenterBold']))
-        elements.append(Paragraph(f"{total:,.0f} {currency}", styles['Total']))
+        elements.append(Paragraph(f"{fmt_amount(total)} {escape(currency)}", styles['Total']))
         
         payment_method = receipt_data.get('payment_method', 'Espèces')
         elements.append(Spacer(1, 0.5 * mm_unit))
-        elements.append(Paragraph(f"Paiement: {payment_method}", styles['Center']))
+        elements.append(Paragraph(f"Paiement: {escape(payment_method or 'Espèces')}", styles['Center']))
         
         return elements
     

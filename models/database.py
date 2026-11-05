@@ -4,61 +4,53 @@ Version avec support contact (téléphone ou adresse) et formatage noms
 """
 import sqlite3
 import json
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
 
 class Database:
     def __init__(self, db_path="data/receipts.db"):
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_database()
-    
+
     def get_connection(self):
         """Obtenir une connexion à la base de données"""
-        return sqlite3.connect(self.db_path)
-    
+        return sqlite3.connect(self.db_path, timeout=10)
+
+    @contextmanager
+    def _cursor(self, commit=False):
+        """Connexion toujours fermée, transaction annulée en cas d'erreur"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            yield cursor
+            if commit:
+                conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def init_database(self):
         """Initialiser les tables de la base de données"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Table des produits
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                unit_price REAL NOT NULL,
-                count INTEGER DEFAULT 0,
-                total_sold REAL DEFAULT 0,
-                last_used TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Table des reçus - MISE À JOUR
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS receipts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                receipt_number TEXT UNIQUE NOT NULL,
-                date TEXT NOT NULL,
-                client_name TEXT,
-                client_contact TEXT,
-                items TEXT NOT NULL,
-                total REAL NOT NULL,
-                payment_method TEXT DEFAULT 'Espèces',
-                notes TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Vérifier si la colonne client_phone existe et la renommer en client_contact
-        cursor.execute("PRAGMA table_info(receipts)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'client_phone' in columns and 'client_contact' not in columns:
-            # Créer nouvelle table avec la nouvelle structure
+        with self._cursor(commit=True) as cursor:
             cursor.execute('''
-                CREATE TABLE receipts_new (
+                CREATE TABLE IF NOT EXISTS products (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    unit_price REAL NOT NULL,
+                    count INTEGER DEFAULT 0,
+                    total_sold REAL DEFAULT 0,
+                    last_used TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS receipts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     receipt_number TEXT UNIQUE NOT NULL,
                     date TEXT NOT NULL,
@@ -71,299 +63,318 @@ class Database:
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
-            # Copier les données
+
+            # Migration : ancienne colonne client_phone -> client_contact
+            cursor.execute("PRAGMA table_info(receipts)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'client_phone' in columns and 'client_contact' not in columns:
+                cursor.execute('''
+                    CREATE TABLE receipts_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        receipt_number TEXT UNIQUE NOT NULL,
+                        date TEXT NOT NULL,
+                        client_name TEXT,
+                        client_contact TEXT,
+                        items TEXT NOT NULL,
+                        total REAL NOT NULL,
+                        payment_method TEXT DEFAULT 'Espèces',
+                        notes TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                cursor.execute('''
+                    INSERT INTO receipts_new
+                    SELECT id, receipt_number, date, client_name, client_phone,
+                           items, total, payment_method, notes, created_at
+                    FROM receipts
+                ''')
+                cursor.execute('DROP TABLE receipts')
+                cursor.execute('ALTER TABLE receipts_new RENAME TO receipts')
+
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_receipts_date ON receipts(date)')
+
             cursor.execute('''
-                INSERT INTO receipts_new 
-                SELECT id, receipt_number, date, client_name, client_phone, 
-                       items, total, payment_method, notes, created_at
-                FROM receipts
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
             ''')
-            
-            # Supprimer l'ancienne table et renommer
-            cursor.execute('DROP TABLE receipts')
-            cursor.execute('ALTER TABLE receipts_new RENAME TO receipts')
-        
-        # Table des paramètres
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        ''')
-        
-        # Initialiser les paramètres par défaut
-        default_settings = {
-            'company_name': 'MAGASIN Ly',
-            'company_address': 'PAV No: 28 TSENEA\nMIARINARIVO 117',
-            'company_phone': '033 01 830 14',
-            'company_email': 'contact@magasinly.mg',
-            'company_nif': '3000262366',
-            'company_stat': '13 19840 30001',
-            'company_rc': '2003A00087',
-            'company_ce': '520/FOK/FIATA',
-            'company_cif': '0189577 DGI-M du 03/06/2025',
-            'receipt_counter': '1',
-            'currency': 'Ar',
-            'paper_width': '58',
-            'receipt_type': 'Grossiste - Détaillants/ Vente à l\'utilisateur',
-            'laser_printer_name': 'HP_LaserJet_1022n',
-            'laser_paper_format': 'A6',
-            'laser_enabled': 'true',
-        }
-        
-        for key, value in default_settings.items():
-            cursor.execute('''
-                INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)
-            ''', (key, value))
-        
-        conn.commit()
-        conn.close()
-    
+
+            default_settings = {
+                'company_name': 'MAGASIN Ly',
+                'company_address': 'PAV No: 28 TSENEA\nMIARINARIVO 117',
+                'company_phone': '033 01 830 14',
+                'company_email': 'contact@magasinly.mg',
+                'company_nif': '3000262366',
+                'company_stat': '13 19840 30001',
+                'company_rc': '2003A00087',
+                'company_ce': '520/FOK/FIATA',
+                'company_cif': '0189577 DGI-M du 03/06/2025',
+                'receipt_counter': '1',
+                'currency': 'Ar',
+                'paper_width': '58',
+                'receipt_type': 'Grossiste - Détaillants/ Vente à l\'utilisateur',
+                'laser_printer_name': 'HP_LaserJet_1022n',
+                'laser_paper_format': 'A6',
+                'laser_enabled': 'true',
+            }
+
+            for key, value in default_settings.items():
+                cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)',
+                               (key, value))
+
     # ========== PRODUITS ==========
-    
-    def add_or_update_product(self, name, unit_price):
-        """Ajouter ou mettre à jour un produit"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id, count, total_sold FROM products WHERE name = ?', (name,))
+
+    def _learn_product(self, cursor, name, unit_price, quantity=1, line_total=None):
+        """Mémoriser un produit vendu (prix, nombre de ventes, chiffre d'affaires)"""
+        if line_total is None:
+            line_total = unit_price * quantity
+        now = datetime.now().isoformat(timespec='seconds')
+
+        cursor.execute('SELECT id FROM products WHERE name = ?', (name,))
         result = cursor.fetchone()
-        
+
         if result:
-            product_id, count, total_sold = result
             cursor.execute('''
-                UPDATE products 
-                SET unit_price = ?, count = ?, total_sold = ?, last_used = ?
+                UPDATE products
+                SET unit_price = ?, count = count + 1, total_sold = total_sold + ?, last_used = ?
                 WHERE id = ?
-            ''', (unit_price, count + 1, total_sold + unit_price, datetime.now().isoformat(), product_id))
+            ''', (unit_price, line_total, now, result[0]))
         else:
             cursor.execute('''
-                INSERT INTO products (name, unit_price, count, total_sold, last_used)
-                VALUES (?, ?, 1, ?, ?)
-            ''', (name, unit_price, unit_price, datetime.now().isoformat()))
-        
-        conn.commit()
-        conn.close()
-    
-    def search_products(self, query):
+                INSERT INTO products (name, unit_price, count, total_sold, last_used, created_at)
+                VALUES (?, ?, 1, ?, ?, ?)
+            ''', (name, unit_price, line_total, now, now))
+
+    def add_or_update_product(self, name, unit_price, quantity=1):
+        """Ajouter ou mettre à jour un produit"""
+        with self._cursor(commit=True) as cursor:
+            self._learn_product(cursor, name, unit_price, quantity)
+
+    def update_product_price(self, product_id, unit_price):
+        """Modifier le prix mémorisé d'un produit"""
+        with self._cursor(commit=True) as cursor:
+            cursor.execute('UPDATE products SET unit_price = ? WHERE id = ?',
+                           (unit_price, product_id))
+
+    def search_products(self, query, limit=8):
         """Rechercher des produits"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT name, unit_price, count, last_used
-            FROM products
-            WHERE name LIKE ?
-            ORDER BY count DESC, last_used DESC
-            LIMIT 10
-        ''', (f'%{query}%',))
-        results = cursor.fetchall()
-        conn.close()
-        return results
-    
-    def get_all_products(self):
-        """Obtenir tous les produits"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, name, unit_price, count, total_sold, last_used
-            FROM products
-            ORDER BY count DESC
-        ''')
-        results = cursor.fetchall()
-        conn.close()
-        return results
-    
+        with self._cursor() as cursor:
+            cursor.execute('''
+                SELECT name, unit_price, count, last_used
+                FROM products
+                WHERE name LIKE ?
+                ORDER BY (name LIKE ?) DESC, count DESC, last_used DESC
+                LIMIT ?
+            ''', (f'%{query}%', f'{query}%', limit))
+            return cursor.fetchall()
+
+    def get_all_products(self, query=''):
+        """Obtenir tous les produits (filtrés optionnellement)"""
+        with self._cursor() as cursor:
+            cursor.execute('''
+                SELECT id, name, unit_price, count, total_sold, last_used
+                FROM products
+                WHERE name LIKE ?
+                ORDER BY count DESC, name
+            ''', (f'%{query}%',))
+            return cursor.fetchall()
+
     def delete_product(self, product_id):
         """Supprimer un produit"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM products WHERE id = ?', (product_id,))
-        conn.commit()
-        conn.close()
-    
+        with self._cursor(commit=True) as cursor:
+            cursor.execute('DELETE FROM products WHERE id = ?', (product_id,))
+
     # ========== REÇUS ==========
-    
-    def save_receipt(self, receipt_data):
-        """Enregistrer un reçu"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        items_json = json.dumps(receipt_data['items'])
-        
+
+    def _next_counter(self, cursor):
+        """Prochain numéro libre : jamais inférieur au plus grand numéro déjà utilisé"""
+        cursor.execute("SELECT value FROM settings WHERE key = 'receipt_counter'")
+        row = cursor.fetchone()
+        try:
+            counter = int(row[0]) if row else 1
+        except (TypeError, ValueError):
+            counter = 1
+
         cursor.execute('''
-            INSERT INTO receipts 
-            (receipt_number, date, client_name, client_contact, items, total, payment_method, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            receipt_data['receipt_number'],
-            receipt_data['date'],
-            receipt_data.get('client_name', ''),
-            receipt_data.get('client_contact', ''),
-            items_json,
-            receipt_data['total'],
-            receipt_data.get('payment_method', 'Espèces'),
-            receipt_data.get('notes', '')
-        ))
-        
-        conn.commit()
-        conn.close()
-        
-        self.increment_receipt_counter()
-    
+            SELECT MAX(CAST(SUBSTR(receipt_number, 6) AS INTEGER))
+            FROM receipts WHERE receipt_number LIKE 'FACT-%'
+        ''')
+        max_used = cursor.fetchone()[0] or 0
+        return max(counter, max_used + 1, 1)
+
+    def save_receipt(self, receipt_data):
+        """
+        Enregistrer un reçu dans une seule transaction :
+        numéro attribué, reçu inséré, compteur incrémenté, produits appris.
+        Met à jour receipt_data['receipt_number'] avec le numéro définitif.
+        """
+        with self._cursor(commit=True) as cursor:
+            counter = self._next_counter(cursor)
+            receipt_number = f"FACT-{counter:05d}"
+            receipt_data['receipt_number'] = receipt_number
+
+            cursor.execute('''
+                INSERT INTO receipts
+                (receipt_number, date, client_name, client_contact, items, total,
+                 payment_method, notes, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                receipt_number,
+                receipt_data['date'],
+                receipt_data.get('client_name', ''),
+                receipt_data.get('client_contact', ''),
+                json.dumps(receipt_data['items'], ensure_ascii=False),
+                receipt_data['total'],
+                receipt_data.get('payment_method', 'Espèces'),
+                receipt_data.get('notes', ''),
+                datetime.now().isoformat(timespec='seconds'),
+            ))
+
+            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('receipt_counter', ?)",
+                           (str(counter + 1),))
+
+            for item in receipt_data['items']:
+                self._learn_product(cursor, item['name'], item['unit_price'],
+                                    item['quantity'], item['total'])
+
+        return receipt_number
+
     def get_all_receipts(self):
         """Obtenir tous les reçus"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, receipt_number, date, client_name, total, created_at
-            FROM receipts
-            ORDER BY created_at DESC
-        ''')
-        results = cursor.fetchall()
-        conn.close()
-        return results
-    
+        return self.search_receipts('')
+
     def get_receipt_by_id(self, receipt_id):
         """Obtenir un reçu par ID"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT receipt_number, date, client_name, client_contact, items, total, payment_method, notes
-            FROM receipts
-            WHERE id = ?
-        ''', (receipt_id,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            return {
-                'receipt_number': result[0],
-                'date': result[1],
-                'client_name': result[2],
-                'client_contact': result[3],
-                'items': json.loads(result[4]),
-                'total': result[5],
-                'payment_method': result[6],
-                'notes': result[7]
-            }
-        return None
-    
+        with self._cursor() as cursor:
+            cursor.execute('''
+                SELECT receipt_number, date, client_name, client_contact, items, total,
+                       payment_method, notes, created_at
+                FROM receipts
+                WHERE id = ?
+            ''', (receipt_id,))
+            result = cursor.fetchone()
+
+        if not result:
+            return None
+        try:
+            items = json.loads(result[4])
+        except (TypeError, ValueError):
+            items = []
+        return {
+            'receipt_number': result[0],
+            'date': result[1],
+            'client_name': result[2] or '',
+            'client_contact': result[3] or '',
+            'items': items,
+            'total': result[5],
+            'payment_method': result[6] or 'Espèces',
+            'notes': result[7] or '',
+            'created_at': result[8],
+        }
+
     def search_receipts(self, query):
-        """Rechercher des reçus"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, receipt_number, date, client_name, total, created_at
-            FROM receipts
-            WHERE receipt_number LIKE ? OR client_name LIKE ?
-            ORDER BY created_at DESC
-        ''', (f'%{query}%', f'%{query}%'))
-        results = cursor.fetchall()
-        conn.close()
-        return results
-    
+        """Rechercher des reçus (numéro, client, contact)"""
+        like = f'%{query}%'
+        with self._cursor() as cursor:
+            cursor.execute('''
+                SELECT id, receipt_number, date, client_name, total, created_at
+                FROM receipts
+                WHERE receipt_number LIKE ? OR client_name LIKE ? OR client_contact LIKE ?
+                ORDER BY id DESC
+            ''', (like, like, like))
+            return cursor.fetchall()
+
     def delete_receipt(self, receipt_id):
         """Supprimer un reçu"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM receipts WHERE id = ?', (receipt_id,))
-        conn.commit()
-        conn.close()
-    
+        with self._cursor(commit=True) as cursor:
+            cursor.execute('DELETE FROM receipts WHERE id = ?', (receipt_id,))
+
     # ========== PARAMÈTRES ==========
-    
+
     def get_setting(self, key, default=''):
         """Obtenir un paramètre"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
-        result = cursor.fetchone()
-        conn.close()
+        with self._cursor() as cursor:
+            cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
+            result = cursor.fetchone()
         return result[0] if result else default
-    
+
     def set_setting(self, key, value):
         """Définir un paramètre"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)
-        ''', (key, str(value)))
-        conn.commit()
-        conn.close()
-    
+        self.set_settings({key: value})
+
+    def set_settings(self, settings_dict):
+        """Définir plusieurs paramètres en une transaction"""
+        with self._cursor(commit=True) as cursor:
+            cursor.executemany('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                               [(k, str(v)) for k, v in settings_dict.items()])
+
     def get_all_settings(self):
         """Obtenir tous les paramètres"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT key, value FROM settings')
-        results = cursor.fetchall()
-        conn.close()
-        return dict(results)
-    
+        with self._cursor() as cursor:
+            cursor.execute('SELECT key, value FROM settings')
+            return dict(cursor.fetchall())
+
     def increment_receipt_counter(self):
         """Incrémenter le compteur de reçus"""
         current = int(self.get_setting('receipt_counter', '1'))
         self.set_setting('receipt_counter', current + 1)
-    
+
     def get_next_receipt_number(self):
-        """Obtenir le prochain numéro de reçu"""
-        counter = int(self.get_setting('receipt_counter', '1'))
-        return f"FACT-{counter:05d}"
-    
+        """Obtenir le prochain numéro de reçu (aperçu)"""
+        with self._cursor() as cursor:
+            return f"FACT-{self._next_counter(cursor):05d}"
+
     # ========== STATISTIQUES ==========
-    
+
     def get_statistics(self):
         """Obtenir les statistiques"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT SUM(total) FROM receipts')
-        total_sales = cursor.fetchone()[0] or 0
-        
-        cursor.execute('SELECT COUNT(*) FROM receipts')
-        total_receipts = cursor.fetchone()[0] or 0
-        
-        avg_sale = total_sales / total_receipts if total_receipts > 0 else 0
-        
-        cursor.execute('SELECT COUNT(*) FROM products')
-        unique_products = cursor.fetchone()[0] or 0
-        
-        conn.close()
-        
+        today = datetime.now().strftime('%Y-%m-%d')
+        month = datetime.now().strftime('%Y-%m')
+        with self._cursor() as cursor:
+            cursor.execute('SELECT COALESCE(SUM(total), 0), COUNT(*) FROM receipts')
+            total_sales, total_receipts = cursor.fetchone()
+
+            cursor.execute('SELECT COALESCE(SUM(total), 0), COUNT(*) FROM receipts WHERE date = ?',
+                           (today,))
+            today_sales, today_receipts = cursor.fetchone()
+
+            cursor.execute("SELECT COALESCE(SUM(total), 0), COUNT(*) FROM receipts WHERE date LIKE ?",
+                           (f'{month}%',))
+            month_sales, month_receipts = cursor.fetchone()
+
+            cursor.execute('SELECT COUNT(*) FROM products')
+            unique_products = cursor.fetchone()[0] or 0
+
         return {
             'total_sales': total_sales,
             'total_receipts': total_receipts,
-            'avg_sale': avg_sale,
-            'unique_products': unique_products
+            'avg_sale': total_sales / total_receipts if total_receipts else 0,
+            'unique_products': unique_products,
+            'today_sales': today_sales,
+            'today_receipts': today_receipts,
+            'month_sales': month_sales,
+            'month_receipts': month_receipts,
         }
-    
+
     def get_top_products(self, limit=5):
         """Obtenir les produits les plus vendus"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT name, count, total_sold
-            FROM products
-            ORDER BY total_sold DESC
-            LIMIT ?
-        ''', (limit,))
-        results = cursor.fetchall()
-        conn.close()
-        return results
-    
+        with self._cursor() as cursor:
+            cursor.execute('''
+                SELECT name, count, total_sold
+                FROM products
+                ORDER BY total_sold DESC
+                LIMIT ?
+            ''', (limit,))
+            return cursor.fetchall()
+
     def clear_all_receipts(self):
         """Effacer tous les reçus"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM receipts')
-        conn.commit()
-        conn.close()
-    
+        with self._cursor(commit=True) as cursor:
+            cursor.execute('DELETE FROM receipts')
+
     def clear_all_products(self):
         """Effacer tous les produits"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM products')
-        conn.commit()
-        conn.close()
+        with self._cursor(commit=True) as cursor:
+            cursor.execute('DELETE FROM products')

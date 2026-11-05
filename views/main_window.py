@@ -1,13 +1,17 @@
 """
 Interface graphique principale - Point d'entrée
-Avec barre de statut affichant date, heure, batterie et infos système
+Avec barre de statut : date/heure, ventes du jour, batterie, ressources système
 """
+import traceback
+from datetime import datetime
+from tkinter import messagebox
+
+import psutil
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from datetime import datetime
-import psutil
-import platform
 
+from utils.formatting import fmt_long_date, fmt_money
+from views.ui_helpers import Toast, setup_styles
 from views.tabs.new_receipt_tab import NewReceiptTab
 from views.tabs.history_tab import HistoryTab
 from views.tabs.products_tab import ProductsTab
@@ -18,227 +22,172 @@ from views.tabs.settings_tab import SettingsTab
 class MainWindow:
     def __init__(self, controller):
         self.controller = controller
-        
-        # Créer la fenêtre principale en plein écran
-        self.root = ttk.Window(
-            title="💼 Générateur de Reçus Pro",
-            themename="cosmo"
-        )
-        
-        # Activer le plein écran
+
+        self.root = ttk.Window(title="Générateur de Reçus Pro", themename="cosmo",
+                               minsize=(800, 600))
+        setup_styles(self.root)
+        self.toast = Toast(self.root)
+
+        # Les erreurs inattendues s'affichent au lieu de disparaître dans la console
+        self.root.report_callback_exception = self._on_callback_error
+
+        self.is_fullscreen = True
         self.root.attributes('-fullscreen', True)
-        
-        # Quitter le plein écran / fermer l'application avec Échap
-        self.root.bind("<Escape>", lambda e: self.root.destroy())
-        
-        # Créer l'interface
+
+        # Échap quitte seulement le plein écran (avant : fermait l'appli et perdait le reçu en cours)
+        self.root.bind("<Escape>", lambda e: self.set_fullscreen(False))
+        self.root.bind("<F11>", lambda e: self.set_fullscreen(not self.is_fullscreen))
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        for i in range(5):
+            self.root.bind(f"<Control-Key-{i + 1}>", lambda e, idx=i: self.notebook.select(idx))
+
         self.create_widgets()
-        
-        # Initialisation initiale
+
         self.new_receipt_tab.refresh_current_items()
         self.new_receipt_tab.update_receipt_number()
-        
-        # Démarrer la mise à jour de la barre de statut
+        self.new_receipt_tab.focus_product()
+
+        self._today_cache = (None, "")
         self.update_status_bar()
-    
+
+    # ---------- Fenêtre ----------
+
+    def set_fullscreen(self, value):
+        self.is_fullscreen = value
+        self.root.attributes('-fullscreen', value)
+        if not value:
+            self.root.state('zoomed') if self.root.tk.call('tk', 'windowingsystem') == 'win32' \
+                else self.root.geometry("1200x800")
+
+    def on_close(self):
+        if self.controller.get_current_items():
+            if not messagebox.askyesno(
+                    "Quitter", "Un reçu est en cours et n'a pas été enregistré.\n\nQuitter quand même ?",
+                    parent=self.root):
+                return
+        self.root.destroy()
+
+    def _on_callback_error(self, exc, val, tb):
+        detail = "".join(traceback.format_exception(exc, val, tb))
+        try:
+            print(detail)
+        except Exception:
+            pass
+        messagebox.showerror("Erreur inattendue", f"{val}\n\n{detail[-1500:]}", parent=self.root)
+
+    # ---------- Widgets ----------
+
     def create_widgets(self):
-        """Créer les widgets de l'interface"""
-        
-        # Frame principal
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=BOTH, expand=YES)
-        
-        # Notebook pour les onglets
+
+        self.create_status_bar(main_frame)
+
         self.notebook = ttk.Notebook(main_frame, bootstyle="primary")
         self.notebook.pack(fill=BOTH, expand=YES, padx=10, pady=(10, 0))
-        
-        # Créer chaque onglet via des modules dédiés
+
         self.new_receipt_tab = NewReceiptTab(self.notebook, self.controller, self)
         self.history_tab = HistoryTab(self.notebook, self.controller, self)
         self.products_tab = ProductsTab(self.notebook, self.controller, self)
         self.statistics_tab = StatisticsTab(self.notebook, self.controller, self)
         self.settings_tab = SettingsTab(self.notebook, self.controller, self)
-        
-        # Ajouter les onglets au notebook
-        self.notebook.add(self.new_receipt_tab.frame, text="➕ Nouveau Reçu")
-        self.notebook.add(self.history_tab.frame, text="📋 Historique")
-        self.notebook.add(self.products_tab.frame, text="📦 Produits")
-        self.notebook.add(self.statistics_tab.frame, text="📊 Statistiques")
-        self.notebook.add(self.settings_tab.frame, text="⚙️ Paramètres")
-        
-        # ========== BARRE DE STATUT ==========
-        self.create_status_bar(main_frame)
-    
+
+        self.notebook.add(self.new_receipt_tab.frame, text="  ➕  Nouveau reçu  ")
+        self.notebook.add(self.history_tab.frame, text="  🧾  Historique  ")
+        self.notebook.add(self.products_tab.frame, text="  📦  Produits  ")
+        self.notebook.add(self.statistics_tab.frame, text="  📊  Statistiques  ")
+        self.notebook.add(self.settings_tab.frame, text="  ⚙  Paramètres  ")
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    def _on_tab_changed(self, event):
+        current = self.notebook.index("current")
+        if current == 0:
+            self.new_receipt_tab.focus_product()
+        elif current == 1:
+            self.history_tab.focus_search()
+        elif current == 3:
+            self.statistics_tab.refresh_statistics()
+
     def create_status_bar(self, parent):
-        """Créer la barre de statut avec infos système"""
-        status_frame = ttk.Frame(parent, bootstyle="secondary")
-        status_frame.pack(fill=X, padx=10, pady=(5, 10))
-        
-        # Date et heure
-        self.datetime_label = ttk.Label(
-            status_frame,
-            text="",
-            font=("Helvetica", 11, "bold"),
-            bootstyle="inverse-secondary"
-        )
-        self.datetime_label.pack(side=LEFT, padx=10, pady=5)
-        
-        # Séparateur
-        ttk.Separator(status_frame, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=5)
-        
-        # Batterie
-        self.battery_label = ttk.Label(
-            status_frame,
-            text="",
-            font=("Helvetica", 10),
-            bootstyle="inverse-secondary"
-        )
-        self.battery_label.pack(side=LEFT, padx=10, pady=5)
-        
-        # Séparateur
-        ttk.Separator(status_frame, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=5)
-        
-        # CPU
-        self.cpu_label = ttk.Label(
-            status_frame,
-            text="",
-            font=("Helvetica", 10),
-            bootstyle="inverse-secondary"
-        )
-        self.cpu_label.pack(side=LEFT, padx=10, pady=5)
-        
-        # Séparateur
-        ttk.Separator(status_frame, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=5)
-        
-        # RAM
-        self.ram_label = ttk.Label(
-            status_frame,
-            text="",
-            font=("Helvetica", 10),
-            bootstyle="inverse-secondary"
-        )
-        self.ram_label.pack(side=LEFT, padx=10, pady=5)
-        
-        # Séparateur
-        ttk.Separator(status_frame, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=5)
-        
-        # Température CPU (si disponible)
-        self.temp_label = ttk.Label(
-            status_frame,
-            text="",
-            font=("Helvetica", 10),
-            bootstyle="inverse-secondary"
-        )
-        self.temp_label.pack(side=LEFT, padx=10, pady=5)
-    
+        status_frame = ttk.Frame(parent, bootstyle="dark", padding=(12, 6))
+        status_frame.pack(fill=X, side=BOTTOM)
+
+        def label(side, size=10, bold=False):
+            lbl = ttk.Label(status_frame, text="", bootstyle="inverse-dark",
+                            font=("", size, "bold" if bold else "normal"))
+            lbl.pack(side=side, padx=10)
+            return lbl
+
+        self.datetime_label = label(LEFT, 11, True)
+        self.today_label = label(LEFT, 11, True)
+
+        ttk.Label(status_frame, text="Échap : quitter le plein écran  •  F11 : plein écran",
+                  bootstyle="inverse-dark", font=("", 9)).pack(side=RIGHT, padx=10)
+        self.ram_label = label(RIGHT)
+        self.cpu_label = label(RIGHT)
+        self.battery_label = label(RIGHT)
+
+    def _today_summary(self):
+        """Résumé des ventes du jour (recalculé au plus toutes les 10 s)"""
+        now = datetime.now()
+        stamp, text = self._today_cache
+        if stamp is None or (now - stamp).total_seconds() >= 10:
+            try:
+                stats = self.controller.get_statistics()
+                currency = self.controller.get_currency()
+                count = stats['today_receipts']
+                text = (f"Aujourd'hui : {count} reçu{'s' if count > 1 else ''} • "
+                        f"{fmt_money(stats['today_sales'], currency)}")
+            except Exception:
+                text = ""
+            self._today_cache = (now, text)
+        return text
+
+    def invalidate_today(self):
+        self._today_cache = (None, "")
+
     def update_status_bar(self):
-        """Mettre à jour les informations de la barre de statut"""
         try:
-            # Date et heure
             now = datetime.now()
-            date_text = now.strftime("%A %d %B %Y • %H:%M:%S")
-            self.datetime_label.config(text=f"📅 {date_text}")
-            
-            # Batterie
+            self.datetime_label.config(text=f"{fmt_long_date(now)}  •  {now:%H:%M:%S}")
+            self.today_label.config(text=self._today_summary())
+
             battery = psutil.sensors_battery()
             if battery:
-                percent = battery.percent
-                plugged = battery.power_plugged
-                
-                if plugged:
-                    battery_icon = "🔌"
-                    battery_text = f"{battery_icon} {percent:.0f}% (En charge)"
+                if battery.power_plugged:
+                    text = f"🔌 {battery.percent:.0f}% (en charge)"
                 else:
-                    # Icônes selon le niveau
-                    if percent > 80:
-                        battery_icon = "🔋"
-                    elif percent > 50:
-                        battery_icon = "🔋"
-                    elif percent > 20:
-                        battery_icon = "🪫"
-                    else:
-                        battery_icon = "⚠️"
-                    
-                    # Temps restant
-                    secs_left = battery.secsleft
-                    if secs_left != psutil.POWER_TIME_UNLIMITED and secs_left > 0:
-                        hours = secs_left // 3600
-                        mins = (secs_left % 3600) // 60
-                        battery_text = f"{battery_icon} {percent:.0f}% ({hours}h{mins:02d})"
-                    else:
-                        battery_text = f"{battery_icon} {percent:.0f}%"
-                
-                self.battery_label.config(text=battery_text)
+                    text = f"🔋 {battery.percent:.0f}%"
+                    secs = battery.secsleft
+                    if secs not in (psutil.POWER_TIME_UNLIMITED, psutil.POWER_TIME_UNKNOWN) and secs > 0:
+                        text += f" ({secs // 3600}h{(secs % 3600) // 60:02d})"
+                    if battery.percent <= 20:
+                        text = "⚠ " + text
+                self.battery_label.config(text=text)
             else:
-                self.battery_label.config(text="🔌 Secteur")
-            
-            # CPU
-            cpu_percent = psutil.cpu_percent(interval=0)
-            cpu_text = f"💻 CPU: {cpu_percent:.1f}%"
-            self.cpu_label.config(text=cpu_text)
-            
-            # RAM
-            ram = psutil.virtual_memory()
-            ram_percent = ram.percent
-            ram_used_gb = ram.used / (1024**3)
-            ram_total_gb = ram.total / (1024**3)
-            ram_text = f"🧠 RAM: {ram_percent:.1f}% ({ram_used_gb:.1f}/{ram_total_gb:.1f} Go)"
-            self.ram_label.config(text=ram_text)
-            
-            # Température CPU (si disponible sous Linux)
-            try:
-                if hasattr(psutil, "sensors_temperatures"):
-                    temps = psutil.sensors_temperatures()
-                    if temps:
-                        # Chercher la température CPU
-                        cpu_temp = None
-                        for name, entries in temps.items():
-                            if 'coretemp' in name.lower() or 'cpu' in name.lower():
-                                if entries:
-                                    cpu_temp = entries[0].current
-                                    break
-                        
-                        if cpu_temp:
-                            if cpu_temp > 80:
-                                temp_icon = "🔥"
-                            elif cpu_temp > 60:
-                                temp_icon = "🌡️"
-                            else:
-                                temp_icon = "❄️"
-                            
-                            temp_text = f"{temp_icon} {cpu_temp:.0f}°C"
-                            self.temp_label.config(text=temp_text)
-                        else:
-                            self.temp_label.config(text="")
-                    else:
-                        self.temp_label.config(text="")
-                else:
-                    self.temp_label.config(text="")
-            except:
-                self.temp_label.config(text="")
-        
+                self.battery_label.config(text="")
+
+            self.cpu_label.config(text=f"CPU {psutil.cpu_percent(interval=0):.0f}%")
+            self.ram_label.config(text=f"RAM {psutil.virtual_memory().percent:.0f}%")
         except Exception as e:
-            print(f"Erreur mise à jour statut: {e}")
-        
-        # Mettre à jour toutes les secondes
+            try:
+                print(f"Erreur mise à jour statut: {e}")
+            except Exception:
+                pass
+
         self.root.after(1000, self.update_status_bar)
-    
+
+    # ---------- Rafraîchissement ----------
+
     def refresh_all_tabs(self):
         """Rafraîchir tous les onglets après une modification"""
+        self.invalidate_today()
         self.history_tab.refresh_history()
         self.products_tab.refresh_products()
         self.statistics_tab.refresh_statistics()
-    
+        self.new_receipt_tab.refresh_current_items()
+        self.new_receipt_tab.update_receipt_number()
+        self.new_receipt_tab.apply_settings()
+
     def run(self):
-        """Lancer l'application"""
         self.root.mainloop()
-
-
-# Exemple d'utilisation
-if __name__ == "__main__":
-    # Ici, controller peut être un objet vide ou ton vrai controller
-    class DummyController:
-        pass
-
-    app = MainWindow(DummyController())
-    app.run()
